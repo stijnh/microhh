@@ -38,9 +38,9 @@ struct TilingStrategy {
 
     static constexpr unsigned int tile_size_x = tile_factor_x * block_size_x;
     static constexpr unsigned int tile_size_y = tile_factor_y * block_size_y;
-    static constexpr unsigned int tile_size_z = tile_factor_z * block_size_x;
+    static constexpr unsigned int tile_size_z = tile_factor_z * block_size_z;
 
-    static constexpr unsigned int block_size_xyz = block_size_z * block_size_y * block_size_z;
+    static constexpr unsigned int block_size_xyz = block_size_x * block_size_y * block_size_z;
     static constexpr unsigned int tile_size_xyz = tile_size_x * tile_size_y * tile_size_z;
 
     template <typename F, typename... Args>
