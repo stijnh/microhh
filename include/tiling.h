@@ -3,6 +3,17 @@
 
 #include "grid.h"
 
+
+template <typename Strategy, typename F, typename... Args>
+__global__ __launch_bounds__(Strategy::block_size_xyz)
+static void tiling_kernel(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args
+) {
+    Strategy::execute(istart, jstart, kstart, iend, jend, kend, fun, args...);
+}
+
 template <
         unsigned int block_size_x_,
         unsigned int block_size_y_,
@@ -43,27 +54,44 @@ struct TilingStrategy {
         static_assert(tile_size_xyz > 0, "invalid tile size");
 
 #pragma unroll(unroll_factor_z)
-        for (int dk = 0; dk < tile_size_z; dk += block_size_z) {
+        for (int dk = 0; dk < tile_factor_z; dk++) {
             const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
-            const int k = kstart + (blockIdx.z * tile_factor_z) * block_size_z + thread_idx_z + dk;
-            if (k >= kend) break;
+            const int k = kstart + blockIdx.z * tile_size_z + thread_idx_z + dk * block_size_z;
+            if (k >= kend && block_size_z > 1) break;
 
 #pragma unroll(unroll_factor_y)
-            for (int dj = 0; dj < tile_size_y; dj += block_size_y) {
+            for (int dj = 0; dj < tile_factor_y; dj++) {
                 const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
-                const int j = jstart + (blockIdx.y * tile_factor_y) * block_size_y + thread_idx_y + dj;
-                if (j >= jend) break;
+                const int j = jstart + blockIdx.y * tile_size_y + thread_idx_y + dj * block_size_y;
+                if (j >= jend && block_size_y > 1) break;
 
 #pragma unroll(unroll_factor_x)
-                for (int di = 0; di < tile_size_x; di += block_size_x) {
+                for (int di = 0; di < tile_factor_x; di++) {
                     const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
-                    const int i = istart + (blockIdx.x * tile_factor_x) * block_size_x + thread_idx_x + di;
-                    if (i >= iend) break;
+                    const int i = istart + blockIdx.x * tile_size_x + thread_idx_x + di * block_size_x;
+                    if (i >= iend && block_size_x > 1) break;
 
                     fun(i, j, k, args...);
                 }
             }
         }
+    }
+
+    template <typename F, typename... Args>
+    static void launch(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args
+    ) {
+        dim3 grid = grid_size(istart, jstart, kstart, iend, jend, kend);
+        dim3 block = block_size();
+
+        tiling_kernel<TilingStrategy><<<grid, block>>>(istart, jstart, kstart, iend, jend, kend, fun, args...);
+    }
+
+    template <typename TF, typename F, typename... Args>
+    static void launch(const Grid_data<TF>& gd, F fun, Args... args) {
+        return launch(gd.istart, gd.jstart, gd.kstart, gd.iend, gd.jend, gd.kend, fun, args...);
     }
 
     static dim3 grid_size(const int itot, const int jtot, const int ktot) {
