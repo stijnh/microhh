@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
+#include "tiling.h"
 #include "grid.h"
 #include "fields.h"
 #include "master.h"
@@ -127,7 +128,8 @@ namespace
         }
     }
 
-    template<typename TF, Surface_model surface_model> __global__
+    template<typename TF, Surface_model surface_model, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void calc_strain2_g(
             TF* __restrict__ strain2,
             TF* __restrict__ u,
@@ -143,20 +145,15 @@ namespace
             const int kstart, const int kend,
             const int jj,     const int kk)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            calc_strain2_body<TF, surface_model>(
-                    i, j, k,
-                    strain2,
-                    u, v, w,
-                    dudz, dvdz, dzi, dzhi,
-                    dxi, dyi,
-                    kstart, jj, kk);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                calc_strain2_body<TF, surface_model>,
+                strain2,
+                u, v, w,
+                dudz, dvdz, dzi, dzhi,
+                dxi, dyi,
+                kstart, jj, kk);
     }
 
     template<typename TF, Surface_model surface_model> __device__
@@ -206,7 +203,8 @@ namespace
     }
 
 
-    template<typename TF, Surface_model surface_model> __global__
+    template<typename TF, Surface_model surface_model, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void evisc_g(
             TF* __restrict__ evisc,
             TF* __restrict__ N2,
@@ -220,19 +218,14 @@ namespace
             const int kstart, const int kend,
             const int jj,     const int kk)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            evisc_body<TF, surface_model>(
-                    i, j, k,
-                    evisc, N2, bgradbot, mlen0, z0m, z,
-                    tPri,
-                    kstart,
-                    jj, kk);
-        }
+        Tiling::execute(
+            istart, jstart, kstart,
+            iend, jend, kend,
+            evisc_body<TF, surface_model>,
+            evisc, N2, bgradbot, mlen0, z0m, z,
+            tPri,
+            kstart,
+            jj, kk);
     }
 
     template<typename TF> __device__
@@ -476,7 +469,8 @@ namespace
         }
     }
 
-    template<typename TF, Surface_model surface_model> __global__
+    template<typename TF, Surface_model surface_model, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void diff_uvw_g(TF* __restrict__ ut, TF* __restrict__ vt, TF* __restrict__ wt,
                     TF* __restrict__ evisc,
                     TF* __restrict__ u, TF* __restrict__ v, TF* __restrict__ w,
@@ -489,25 +483,20 @@ namespace
                     const int iend,   const int jend,   const int kend,
                     const int jj,     const int kk)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            diff_uvw_body<TF, surface_model>(
-                    i, j, k,
-                    ut, vt, wt,
-                    evisc,
-                    u, v, w,
-                    fluxbotu, fluxtopu,
-                    fluxbotv, fluxtopv,
-                    dzi, dzhi, dxi, dyi,
-                    rhoref, rhorefh,
-                    visc,
-                    kstart, kend,
-                    jj, kk);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                diff_uvw_body<TF, surface_model>,
+                ut, vt, wt,
+                evisc,
+                u, v, w,
+                fluxbotu, fluxtopu,
+                fluxbotv, fluxtopv,
+                dzi, dzhi, dxi, dyi,
+                rhoref, rhorefh,
+                visc,
+                kstart, kend,
+                jj, kk);
     }
 
     template<typename TF, Surface_model surface_model> __device__
@@ -575,7 +564,8 @@ namespace
         }
     }
 
-    template<typename TF, Surface_model surface_model> __global__
+    template<typename TF, Surface_model surface_model, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void diff_c_g(TF* __restrict__ at, TF* __restrict__ a, TF* __restrict__ evisc,
                   TF* __restrict__ fluxbot, TF* __restrict__ fluxtop,
                   TF* __restrict__ dzi, TF* __restrict__ dzhi, const TF dxidxi, const TF dyidyi,
@@ -585,21 +575,17 @@ namespace
                   const int iend,   const int jend,   const int kend,
                   const int jj,     const int kk)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            diff_c_body<TF, surface_model>(i, j, k,
-                                             at, a, evisc,
-                                             fluxbot, fluxtop,
-                                             dzi, dzhi, dxidxi, dyidyi,
-                                             rhoref, rhorefh,
-                                             tPri, visc,
-                                             kstart, kend,
-                                             jj, kk);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                diff_c_body<TF, surface_model>,
+                at, a, evisc,
+                fluxbot, fluxtop,
+                dzi, dzhi, dxidxi, dyidyi,
+                rhoref, rhorefh,
+                tPri, visc,
+                kstart, kend,
+                jj, kk);
     }
 
     template<typename TF> __device__
@@ -612,24 +598,21 @@ namespace
         dnmul[ijk] = fabs(tPrfac*evisc[ijk]*(dxidxi + dyidyi + dzi[k]*dzi[k]));
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void calc_dnmul_g(TF* __restrict__ dnmul, TF* __restrict__ evisc,
                       TF* __restrict__ dzi, TF tPrfac, const TF dxidxi, const TF dyidyi,
                       const int istart, const int jstart, const int kstart,
                       const int iend,   const int jend,   const int kend,
                       const int jj,     const int kk)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            calc_dnmul_body<TF>(i, j, k,
-                                  dnmul, evisc,
-                                  dzi, tPrfac, dxidxi, dyidyi,
-                                  jj, kk);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                calc_dnmul_body<TF>,
+                dnmul, evisc,
+                dzi, tPrfac, dxidxi, dyidyi,
+                jj, kk);
     }
 }
 
@@ -673,15 +656,12 @@ void Diff_smag2<TF>::exec_viscosity(Thermo<TF>& thermo)
 {
     auto& gd = grid.get_grid_data();
 
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi  = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj  = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kcells);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling ::grid_size(gd.imax, gd.jmax, gd.kcells);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     // Contain the full icells and jcells in this grid.
+    const int blocki = gd.ithread_block;
+    const int blockj = gd.jthread_block;
     const int grid2di  = gd.icells/blocki + (gd.icells%blocki > 0);
     const int grid2dj  = gd.jcells/blockj + (gd.jcells%blockj > 0);
 
@@ -825,13 +805,8 @@ void Diff_smag2<TF>::exec(Stats<TF>& stats)
 {
     auto& gd = grid.get_grid_data();
 
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi  = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj  = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kmax);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling ::grid_size(gd);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     const TF dxidxi = 1./(gd.dx * gd.dx);
     const TF dyidyi = 1./(gd.dy * gd.dy);
@@ -912,13 +887,8 @@ unsigned long Diff_smag2<TF>::get_time_limit(unsigned long idt, double dt)
 {
     auto& gd = grid.get_grid_data();
 
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi  = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj  = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kmax);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling::grid_size(gd);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     const TF dxidxi = 1./(gd.dx * gd.dx);
     const TF dyidyi = 1./(gd.dy * gd.dy);
@@ -953,13 +923,8 @@ double Diff_smag2<TF>::get_dn(double dt)
 {
     auto& gd = grid.get_grid_data();
 
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi  = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj  = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kmax);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling::grid_size(gd);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     const TF dxidxi = 1./(gd.dx * gd.dx);
     const TF dyidyi = 1./(gd.dy * gd.dy);

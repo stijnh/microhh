@@ -20,6 +20,7 @@
  * along with MicroHH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "tiling.h"
 #include "advec_2i5.h"
 #include "grid.h"
 #include "fields.h"
@@ -135,7 +136,8 @@ namespace
         }
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void advec_u_g(TF* __restrict__ ut, const TF* __restrict__ u,
                     const TF* __restrict__ v,  const TF* __restrict__ w,
                     const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -144,20 +146,16 @@ namespace
                     const int istart, const int jstart, const int kstart,
                     const int iend,   const int jend,   const int kend)
     {
-                const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-                const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-                const int k = blockIdx.z + kstart;
-
-                if (i < iend && j < jend && k < kend)
-                {
-                    advec_u_body<TF>(i, j, k,
-                                       ut, u,
-                                       v, w,
-                                       rhoref, rhorefh,
-                                       dzi, dxi, dyi,
-                                       jj, kk,
-                                       kstart, kend);
-                }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                advec_u_body<TF>,
+                ut, u,
+                v, w,
+                rhoref, rhorefh,
+                dzi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
     }
 
     template<typename TF> __device__
@@ -256,7 +254,8 @@ namespace
         }
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void advec_v_g(TF* __restrict__ vt, const TF* __restrict__ u,
                    const TF* __restrict__ v,  const TF* __restrict__ w,
                    const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -265,20 +264,16 @@ namespace
                    const int istart, const int jstart, const int kstart,
                    const int iend,   const int jend,   const int kend)
    {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            advec_v_body<TF>(i, j, k,
-                               vt, u,
-                               v, w,
-                               rhoref, rhorefh,
-                               dzi, dxi, dyi,
-                               jj, kk,
-                               kstart, kend);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                advec_v_body<TF>,
+                vt, u,
+                v, w,
+                rhoref, rhorefh,
+                dzi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
     }
 
 
@@ -368,7 +363,8 @@ namespace
         }
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void advec_w_g(TF* __restrict__ wt, const TF* __restrict__ u,
                    const TF* __restrict__ v,  const TF* __restrict__ w,
                    const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -377,20 +373,16 @@ namespace
                    const int istart, const int jstart, const int kstart,
                    const int iend,   const int jend,   const int kend)
    {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            advec_w_body<TF>(i, j, k,
-                               wt, u,
-                               v, w,
-                               rhoref, rhorefh,
-                               dzhi, dxi, dyi,
-                               jj, kk,
-                               kstart, kend);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                advec_w_body<TF>,
+                wt, u,
+                v, w,
+                rhoref, rhorefh,
+                dzhi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
    }
 
 
@@ -491,7 +483,8 @@ namespace
         }
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void advec_s_g(
             TF* __restrict__ st, const TF* __restrict__ s,
             const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -501,20 +494,16 @@ namespace
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            advec_s_body<TF>(i, j, k,
-                               st, s,
-                               u, v, w,
-                               rhoref, rhorefh,
-                               dzi, dxi, dyi,
-                               jj, kk,
-                               kstart, kend);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                advec_s_body<TF>,
+                st, s,
+                u, v, w,
+                rhoref, rhorefh,
+                dzi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
     }
 
     // Implementation flux limiter according to Koren, 1993.
@@ -635,7 +624,8 @@ namespace
         }
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void advec_s_lim_g(
             TF* __restrict__ st, const TF* __restrict__ s,
             const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -645,20 +635,16 @@ namespace
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            advec_s_lim_body<TF>(i, j, k,
-                                   st, s,
-                                   u, v, w,
-                                   rhoref, rhorefh,
-                                   dzi, dxi, dyi,
-                                   jj, kk,
-                                   kstart, kend);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                advec_s_lim_body<TF>,
+                st, s,
+                u, v, w,
+                rhoref, rhorefh,
+                dzi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
     }
 
     template<typename TF> __device__
@@ -695,7 +681,8 @@ namespace
                       + fabs(interp6_ws(w[ijk-kk2], w[ijk-kk1], w[ijk], w[ijk+kk1], w[ijk+kk2], w[ijk+kk3]))*dzi[k];
     }
 
-    template<typename TF> __global__
+    template<typename TF, typename Tiling = DefaultTiling>
+    TILING_KERNEL(Tiling)
     void calc_cfl_g(TF* const __restrict__ tmp1,
                     const TF* __restrict__ u, const TF* __restrict__ v, const TF* __restrict__ w,
                     const TF* __restrict__ dzi, const TF dxi, const TF dyi,
@@ -703,19 +690,15 @@ namespace
                     const int istart, const int jstart, const int kstart,
                     const int iend, const int jend, const int kend)
     {
-        const int i = blockIdx.x*blockDim.x + threadIdx.x + istart;
-        const int j = blockIdx.y*blockDim.y + threadIdx.y + jstart;
-        const int k = blockIdx.z + kstart;
-
-        if (i < iend && j < jend && k < kend)
-        {
-            calc_cfl_body(i, j, k,
-                            tmp1,
-                            u, v, w,
-                            dzi, dxi, dyi,
-                            jj, kk,
-                            kstart, kend);
-        }
+        Tiling::execute(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                calc_cfl_body<TF>,
+                tmp1,
+                u, v, w,
+                dzi, dxi, dyi,
+                jj, kk,
+                kstart, kend);
     }
 }
 
@@ -737,13 +720,8 @@ template<typename TF>
 double Advec_2i5<TF>::get_cfl(const double dt)
 {
     const Grid_data<TF>& gd = grid.get_grid_data();
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kcells);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling ::grid_size(gd.imax, gd.jmax, gd.kcells);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     auto tmp1 = fields.get_tmp_g();
 
@@ -769,13 +747,8 @@ template<typename TF>
 void Advec_2i5<TF>::exec(Stats<TF>& stats)
 {
     const Grid_data<TF>& gd = grid.get_grid_data();
-    const int blocki = gd.ithread_block;
-    const int blockj = gd.jthread_block;
-    const int gridi = gd.imax/blocki + (gd.imax%blocki > 0);
-    const int gridj = gd.jmax/blockj + (gd.jmax%blockj > 0);
-
-    dim3 gridGPU (gridi, gridj, gd.kmax);
-    dim3 blockGPU(blocki, blockj, 1);
+    dim3 gridGPU = DefaultTiling::grid_size(gd);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     advec_u_g<TF><<<gridGPU, blockGPU>>>(
         fields.mt.at("u")->fld_g,
