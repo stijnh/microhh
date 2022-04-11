@@ -1,4 +1,13 @@
 import numpy as np
+import pycuda.driver as drv
+import re
+import os
+import math
+import kernel_tuner
+from collections import OrderedDict
+import json
+import platform
+from datetime import datetime
 
 class Grid:
     def __init__(self, xsize, ysize, zsize, itot, jtot, ktot, ijgc=1, kgc=1, TF=np.float64):
@@ -7,6 +16,7 @@ class Grid:
         """
 
         np.random.seed(666)
+        self.TF = TF
 
         self.xsize = TF(xsize)
         self.ysize = TF(ysize)
@@ -43,6 +53,7 @@ class Grid:
         self.dyi = TF(1/self.dy)
 
         self.dzi   = np.random.random(self.kcells).astype(TF)
+        self.dzhi  = np.random.random(self.kcells).astype(TF)
         self.dzi4  = np.random.random(self.kcells).astype(TF)
         self.dzhi4 = np.random.random(self.kcells).astype(TF)
 
@@ -74,6 +85,195 @@ class Fields:
 
         self.rhoref  = np.random.random(kcells).astype(TF)
         self.rhorefh = np.random.random(kcells).astype(TF)
+
+    @staticmethod
+    def from_grid(grid, fields):
+        return Fields(fields, grid.ncells, grid.ijcells, grid.kcells, TF=grid.TF)
+
+
+def device_name(device=0):
+    drv.init()
+    name = drv.Device(device).name().lower()
+    return re.sub('[^a-zA-Z0-9_-]', '-', name)
+
+
+def device_attribute(name, device=0):
+    drv.init()
+    device = drv.Device(device)
+    return device.get_attribute(drv.device_attribute.names[name])
+
+
+def float_name(TF):
+    if TF == np.float64:
+        return "double"
+    elif TF == np.float32:
+        return "float"
+    else:
+        raise "unknown type: {}".format(TF)
+
+def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning):
+    # Tune parameters
+    tune_params = OrderedDict()
+    tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256]
+    tune_params["BLOCK_SIZE_Y"] = [1, 2, 4, 8, 16, 32]
+    tune_params["BLOCK_SIZE_Z"] = [1]
+    tune_params["STATIC_STRIDES"] = [0]
+    tune_params["TILING_FACTOR_X"] = [1]
+    tune_params["TILING_FACTOR_Y"] = [1]
+    tune_params["TILING_FACTOR_Z"] = [1]
+    tune_params["TILING_STRATEGY"] = [0]
+    tune_params["REWRITE_INTERP"] = [0]
+    tune_params["BLOCKS_PER_MP"] = [0]
+    tune_params["LOOP_UNROLL_FACTOR_X"] = [1]
+    tune_params["LOOP_UNROLL_FACTOR_Y"] = [1]
+    tune_params["LOOP_UNROLL_FACTOR_Z"] = [1]
+    strategy = "brute_force"
+    strategy_options = dict()
+
+    if extra_tuning:
+        tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256, 512, 1024]
+        tune_params["BLOCK_SIZE_Y"] = [1, 2, 4, 8, 16, 32]
+        tune_params["BLOCK_SIZE_Z"] = [1, 2, 4]
+        tune_params["TILING_FACTOR_X"] = [1, 2, 4, 8]
+        tune_params["TILING_FACTOR_Y"] = [1, 2, 4]
+        tune_params["TILING_FACTOR_Z"] = [1, 2, 4]
+        tune_params["LOOP_UNROLL_FACTOR_X"] = tune_params["TILING_FACTOR_X"]
+        tune_params["LOOP_UNROLL_FACTOR_Y"] = tune_params["TILING_FACTOR_Y"]
+        tune_params["LOOP_UNROLL_FACTOR_Z"] = tune_params["TILING_FACTOR_Z"]
+        tune_params["REWRITE_INTERP"] = [0, 1]
+        tune_params["BLOCKS_PER_MP"] = [0, 1, 2, 3, 4]
+        strategy = "bayes_opt"
+
+    max_threads_per_sm = device_attribute("MAX_THREADS_PER_MULTIPROCESSOR")
+    max_threads_per_block = device_attribute("MAX_THREADS_PER_BLOCK")
+
+    restrictions = [
+        f"BLOCK_SIZE_X * BLOCK_SIZE_Y * BLOCK_SIZE_Z * BLOCKS_PER_MP <= {max_threads_per_sm}",
+        f"32 <= BLOCK_SIZE_X * BLOCK_SIZE_Y * BLOCK_SIZE_Z <= {max_threads_per_block}",
+        "TILING_FACTOR_X % LOOP_UNROLL_FACTOR_X == 0",
+        "TILING_FACTOR_Y % LOOP_UNROLL_FACTOR_Y == 0",
+        "TILING_FACTOR_Z % LOOP_UNROLL_FACTOR_Z == 0",
+    ]
+
+    # general options
+    lang = 'CUDA'
+    block_size_names = ['BLOCK_SIZE_' + c for c in 'XYZ']
+    grid_div_x = ['BLOCK_SIZE_X', 'TILING_FACTOR_X']
+    grid_div_y = ['BLOCK_SIZE_Y', 'TILING_FACTOR_Y']
+    grid_div_z = ['BLOCK_SIZE_Z', 'TILING_FACTOR_Z']
+
+    problem_size = (grid.itot, grid.jtot, grid.ktot)
+    print(f'tuning {kernel_name} on {problem_size} for {float_name(grid.TF)}')
+
+    # Calculate the number of iterations
+    total_points = grid.itot * grid.jtot * grid.ktot
+    iterations = int(math.ceil(1e7 / total_points))
+    iterations = min(max(5, iterations), 100)  # Clamp between 5 and 100
+
+    # Compiler flags
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    flags = [
+        "-I", current_dir,
+        "-I", current_dir + "/../include",
+        "--define-macro", "float_type={}".format(float_name(grid.TF)),
+        "--define-macro", "RESTRICTKEYWORD=__restrict__",
+        "--define-macro", "USECUDA=1",
+        "--extended-lambda",
+        "-std=c++17",
+    ]
+
+    # True answer from the kernel without optimizations
+    params = OrderedDict((key, values[0]) for key, values in tune_params.items())
+    unopt_flags = ['-O0', '-Xcicc', '-O0', '-Xptxas', '-O0']
+    outputs = kernel_tuner.run_kernel(
+        kernel_name,
+        kernel_source,
+        problem_size,
+        args,
+        params,
+        block_size_names=block_size_names,
+        compiler_options=flags + unopt_flags,
+        grid_div_x=grid_div_x,
+        grid_div_y=grid_div_y,
+        grid_div_z=grid_div_z,
+        lang=lang,
+    )
+
+    # The answers are buffers that differ from the inputs (i.e, that have been written to)
+    answers = [None] * len(outputs)
+    for index, output in enumerate(outputs):
+        count = np.sum(~np.isfinite(output))
+
+        if count > 0:
+            raise RuntimeError(f'error: argument {index} of {kernel_name} contains {count} non-finite values!')
+
+        if np.any(output != args[index]):
+            answers[index] = output
+
+    # Tune it!
+    return kernel_tuner.tune_kernel(
+        kernel_name,
+        kernel_source,
+        problem_size,
+        args,
+        tune_params,
+        compiler_options=flags,
+        restrictions=restrictions,
+        iterations=iterations,
+        cache=cache_file,
+        block_size_names=block_size_names,
+        grid_div_x=grid_div_x,
+        grid_div_y=grid_div_y,
+        grid_div_z=grid_div_z,
+        #quiet=True,
+        strategy=strategy,
+        strategy_options=strategy_options,
+        answer=answers,
+        atol=1e-12,
+        #lang='cupy',  # TODO: cupy fails, why?
+        lang=lang,
+    )
+
+def store_results(filename, configs, env):
+    best_config = min(configs, key=lambda r: r['time'])
+
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
+            file_config = json.load(f)
+
+            if file_config['time'] < best_config['time']:
+                return file_config
+
+    time = best_config.pop('time')
+    times = best_config.pop('times')
+
+    data = dict(
+        date=datetime.now().isoformat(),
+        config=best_config,
+        time=time,
+        times=times,
+        hostname=platform.node(),
+        env=env,
+    )
+
+    new_filename = filename + '.tmp'
+    with open(new_filename, 'w') as f:
+        json.dump(data, f, sort_keys=True, indent=4)
+
+    os.replace(new_filename, filename)  # TODO: is this an atomic operation?
+    return data
+
+
+def tune_and_store(grid, args, kernel_name, kernel_source):
+    experiment_key = f"{kernel_name}_{grid.itot}x{grid.jtot}x{grid.ktot}_{float_name(grid.TF)}_{device_name()}"
+    cache_file = f'cache/{experiment_key}.json'
+    results_file = f'results/{experiment_key}.json'
+
+    results_a, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, False)
+    store_results(results_file, results_a, env)
+
+    results_b, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, True)
+    return store_results(results_file, results_b, env)
 
 
 if __name__ == '__main__':
