@@ -18,8 +18,9 @@ def tune_advec(axis, grid):
 
     kernel_name = f"advec_{axis}_wrapper"
     kernel_source = "advec_2i5.cu"
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1])
 
-    return tune_and_store(grid, args, kernel_name, kernel_source)
+    return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
 
 
 def tune_advec_u(grid):
@@ -49,8 +50,9 @@ def tune_advec_s(grid):
 
     kernel_name = "advec_s_wrapper"
     kernel_source = "advec_2i5.cu"
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1])
 
-    return tune_and_store(grid, args, kernel_name, kernel_source)
+    return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
 
 
 def tune_advec_s_lim(grid):
@@ -68,8 +70,9 @@ def tune_advec_s_lim(grid):
 
     kernel_name = "advec_s_lim_wrapper"
     kernel_source = "advec_2i5.cu"
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1])
 
-    return tune_and_store(grid, args, kernel_name, kernel_source)
+    return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
 
 
 def tune_calc_cfl(grid):

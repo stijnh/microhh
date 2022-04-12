@@ -29,6 +29,10 @@
 #  define CUDA_MACRO
 #endif
 
+#ifndef REWRITE_FINITE_DIFFERENCE
+#define REWRITE_FINITE_DIFFERENCE 0
+#endif
+
 namespace Finite_difference
 {
     namespace O2
@@ -36,13 +40,21 @@ namespace Finite_difference
         template<typename TF>
         CUDA_MACRO inline TF interp2(const TF a, const TF b)
         {
+#if REWRITE_FINITE_DIFFERENCE
+            return TF(0.5) * a + TF(0.5) * b;
+#else
             return TF(0.5) * (a + b);
+#endif
         }
 
         template<typename TF>
         CUDA_MACRO inline TF interp22(const TF a, const TF b, const TF c, const TF d)
         {
+#if REWRITE_FINITE_DIFFERENCE
+            return TF(0.25) * a + TF(0.25) * b + TF(0.25) * c + TF(0.25) * d;
+#else
             return TF(0.25) * (a + b + c + d);
+#endif
         }
 
         template<typename TF>
@@ -92,13 +104,17 @@ namespace Finite_difference
         template<typename TF>
         CUDA_MACRO inline TF interp4c(const TF a, const TF b, const TF c, const TF d)
         {
+#if REWRITE_FINITE_DIFFERENCE
+            return ci0<TF>*a + ci0<TF>*d + ci1<TF>*b + ci1<TF>*c;
+#else
             return ci0<TF>*(a+d) + ci1<TF>*(b+c);
+#endif
         }
 
         template<typename TF>
         CUDA_MACRO inline TF interp4b(const TF a, const TF b, const TF c, const TF d)
         {
-            return bi0<TF>*a + bi1<TF>*b - bi2<TF>*c + bi3<TF>*d;
+            return bi0<TF>*a + bi1<TF>*b + (-bi2<TF>)*c + bi3<TF>*d;
         }
 
         template<typename TF>
@@ -112,7 +128,11 @@ namespace Finite_difference
         {
             constexpr TF c0 = TF(7./12.);
             constexpr TF c1 = TF(1./12.);
+#if REWRITE_FINITE_DIFFERENCE
+            return c0*b + c0*c + (-c1)*a + (-c1)*d;
+#else
             return c0*(b+c) - c1*(a+d);
+#endif
         }
 
         template<typename TF>
@@ -120,13 +140,21 @@ namespace Finite_difference
         {
             constexpr TF c0 = TF(3./12.);
             constexpr TF c1 = TF(1./12.);
-            return c0*(c-b) - c1*(d-a);
+#if REWRITE_FINITE_DIFFERENCE
+            return c0*c + (-c0)*b +(-c1)*d + c1*a
+#else
+            return c0*(c-b) - c1*(d-a);;
+#endif
         }
 
         template<typename TF>
         CUDA_MACRO inline TF grad4(const TF a, const TF b, const TF c, const TF d)
         {
+#if REWRITE_FINITE_DIFFERENCE
+            return (-cg0<TF>)*d + cg0<TF>*a + (-cg1<TF>)*c + cg1<TF>*b;
+#else
             return ( - cg0<TF>*(d-a) - cg1<TF>*(c-b) );
+#endif
         }
     }
 
@@ -140,7 +168,11 @@ namespace Finite_difference
             constexpr TF c1 = TF(8./60.);
             constexpr TF c2 = TF(1./60.);
 
+#if REWRITE_FINITE_DIFFERENCE
+            return c0*c + c0*d + (-c1)*b + (-c1)*e + c2*a + c2*f;
+#else
             return c0*(c+d) - c1*(b+e) + c2*(a+f);
+#endif
         }
 
         template<typename TF>
@@ -151,7 +183,11 @@ namespace Finite_difference
             constexpr TF c1 = TF(5./60.);
             constexpr TF c2 = TF(1./60.);
 
+#if REWRITE_FINITE_DIFFERENCE
+            return c0*d + (-c0)*c + (-c1)*e + c1*b + c2*f + (-c2)*a;
+#else
             return c0*(d-c) - c1*(e-b) + c2*(f-a);
+#endif
         }
     }
 }

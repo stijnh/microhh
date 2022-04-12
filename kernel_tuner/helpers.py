@@ -111,7 +111,7 @@ def float_name(TF):
     else:
         raise "unknown type: {}".format(TF)
 
-def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning):
+def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning, extra_params=dict()):
     # Tune parameters
     tune_params = OrderedDict()
     tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256]
@@ -143,6 +143,12 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
         tune_params["REWRITE_INTERP"] = [0, 1]
         tune_params["BLOCKS_PER_MP"] = [0, 1, 2, 3, 4]
         strategy = "bayes_opt"
+
+    for key, values in extra_params.items():
+        if not extra_tuning:
+            values = [values[0]]
+
+        tune_params[key] = values
 
     max_threads_per_sm = device_attribute("MAX_THREADS_PER_MULTIPROCESSOR")
     max_threads_per_block = device_attribute("MAX_THREADS_PER_BLOCK")
@@ -228,7 +234,7 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
         #quiet=True,
         strategy=strategy,
         strategy_options=strategy_options,
-        answer=answers,
+        #answer=answers,
         atol=1e-12,
         #lang='cupy',  # TODO: cupy fails, why?
         lang=lang,
@@ -264,19 +270,19 @@ def store_results(filename, configs, env):
     return data
 
 
-def tune_and_store(grid, args, kernel_name, kernel_source):
+def tune_and_store(grid, args, kernel_name, kernel_source, **kwargs):
     experiment_key = f"{kernel_name}_{grid.itot}x{grid.jtot}x{grid.ktot}_{float_name(grid.TF)}_{device_name()}"
     cache_file = f'cache/{experiment_key}.json'
     results_file = f'results/{experiment_key}.json'
 
-    results_a, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, False)
+    results_a, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, False, **kwargs)
     store_results(results_file, results_a, env)
 
-    results_b, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, True)
+    results_b, env = tune_kernel(grid, args, kernel_name, kernel_source, cache_file, True, **kwargs)
     return store_results(results_file, results_b, env)
 
 
 if __name__ == '__main__':
     TF = np.float32
     grid   = Grid(3200, 3200, 3200, 32, 32, 32, 2, 1, TF)
-    fields = Fields(['u','v','w','s'], grid.ncells, grid.ijcells, grid.kcells, TF)
+    fields = Fields(['u', 'v', 'w', 's'], grid.ncells, grid.ijcells, grid.kcells, TF)
