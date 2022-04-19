@@ -12,6 +12,80 @@
 
 #define TILING_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
 
+struct Level {
+    __device__ __host__ __forceinline__
+    Level(int k, int kstart, int kend): dist_start_(k - kstart), dist_end_((kend - 1) - k) {}
+
+    __device__ __host__ __forceinline__
+    int distance_to_start() const {
+        return dist_start_;
+    }
+
+    __device__ __host__ __forceinline__
+    int distance_to_end() const {
+        return dist_end_;
+    }
+
+private:
+    int dist_start_;
+    int dist_end_;
+};
+
+struct LevelStart {
+    __device__ __host__ __forceinline__
+    LevelStart(int k, int kstart, int kend): dist_start_(k - kstart) {}
+
+    __device__ __host__ __forceinline__
+    int distance_to_start() const {
+        return dist_start_;
+    }
+
+    __device__ __host__ __forceinline__
+    int distance_to_end() const {
+        return INT_MAX;
+    }
+
+private:
+    int dist_start_;
+};
+
+struct LevelEnd {
+    __device__ __host__ __forceinline__
+    LevelEnd(int k, int kstart, int kend): dist_end_((kend - 1) - k) {}
+
+    __device__ __host__ __forceinline__
+    int distance_to_start() const {
+        return INT_MAX;
+    }
+
+    __device__ __host__ __forceinline__
+    int distance_to_end() const {
+        return dist_end_;
+    }
+
+private:
+    int dist_start_;
+    int dist_end_;
+};
+
+struct LevelInterior {
+    __device__ __host__ __forceinline__
+    LevelInterior() {}
+
+    __device__ __host__ __forceinline__
+    LevelInterior(int, int, int) {}
+
+    __device__ __host__ __forceinline__
+    int distance_to_start() const {
+        return INT_MAX;
+    }
+
+    __device__ __host__ __forceinline__
+    int distance_to_end() const {
+        return INT_MAX;
+    }
+};
+
 template <typename Strategy, typename F, typename... Args>
 TILING_KERNEL(Strategy)
 static void tiling_kernel(
@@ -58,9 +132,9 @@ struct TilingStrategy
     static_assert(block_size_xyz > 0, "invalid block size");
     static_assert(tile_size_xyz > 0, "invalid tile size");
 
-    template <typename F, typename... Args>
+    template <typename Level, typename F, typename... Args>
     __device__ __forceinline__
-    static void execute_block(
+    static void execute_block_level(
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend,
             F fun, Args... args
@@ -95,10 +169,25 @@ struct TilingStrategy
                     const int i = istart + blockIdx.x * tile_size_x + di * block_size_x + thread_idx_x;
                     if (block_size_x > 1 && i >= iend) break;
 
-                    fun(i, j, k, args...);
+                    fun(i, j, k, Level(k, kstart, kend), args...);
                 }
             }
         }
+    }
+
+    template <typename F, typename... Args>
+    __device__ __forceinline__
+    static void execute_block(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args
+    )
+    {
+        TilingStrategy::execute_block_level<Level>(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                fun, args...
+        );
     }
 
     template <typename F, typename... Args>
