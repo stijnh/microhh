@@ -12,80 +12,6 @@
 
 #define TILING_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
 
-struct Level {
-    __device__ __host__ __forceinline__
-    Level(int k, int kstart, int kend): dist_start_(k - kstart), dist_end_((kend - 1) - k) {}
-
-    __device__ __host__ __forceinline__
-    int distance_to_start() const {
-        return dist_start_;
-    }
-
-    __device__ __host__ __forceinline__
-    int distance_to_end() const {
-        return dist_end_;
-    }
-
-private:
-    int dist_start_;
-    int dist_end_;
-};
-
-struct LevelStart {
-    __device__ __host__ __forceinline__
-    LevelStart(int k, int kstart, int kend): dist_start_(k - kstart) {}
-
-    __device__ __host__ __forceinline__
-    int distance_to_start() const {
-        return dist_start_;
-    }
-
-    __device__ __host__ __forceinline__
-    int distance_to_end() const {
-        return INT_MAX;
-    }
-
-private:
-    int dist_start_;
-};
-
-struct LevelEnd {
-    __device__ __host__ __forceinline__
-    LevelEnd(int k, int kstart, int kend): dist_end_((kend - 1) - k) {}
-
-    __device__ __host__ __forceinline__
-    int distance_to_start() const {
-        return INT_MAX;
-    }
-
-    __device__ __host__ __forceinline__
-    int distance_to_end() const {
-        return dist_end_;
-    }
-
-private:
-    int dist_start_;
-    int dist_end_;
-};
-
-struct LevelInterior {
-    __device__ __host__ __forceinline__
-    LevelInterior() {}
-
-    __device__ __host__ __forceinline__
-    LevelInterior(int, int, int) {}
-
-    __device__ __host__ __forceinline__
-    int distance_to_start() const {
-        return INT_MAX;
-    }
-
-    __device__ __host__ __forceinline__
-    int distance_to_end() const {
-        return INT_MAX;
-    }
-};
-
 template <typename Strategy, typename F, typename... Args>
 TILING_KERNEL(Strategy)
 static void tiling_kernel(
@@ -96,6 +22,39 @@ static void tiling_kernel(
 {
     Strategy::execute_block(istart, jstart, kstart, iend, jend, kend, fun, args...);
 }
+
+struct Level {
+    __host__ __device__ __forceinline__
+    Level(int dist_start, int dist_end): dist_start_(dist_start), dist_end_(dist_end) {
+
+    }
+
+    __host__ __device__ __forceinline__
+    int distance_to_start() const {
+        return dist_start_;
+    }
+
+    __host__ __device__ __forceinline__
+    int distance_to_end() const {
+        return dist_end_;
+    }
+
+private:
+    int dist_start_;
+    int dist_end_;
+};
+
+struct InteriorLevel {
+    __host__ __device__ __forceinline__
+    int distance_to_start() const {
+        return INT_MAX;
+    }
+
+    __host__ __device__ __forceinline__
+    int distance_to_end() const {
+        return INT_MAX;
+    }
+};
 
 template <
         unsigned int block_size_x_,
@@ -132,9 +91,36 @@ struct TilingStrategy
     static_assert(block_size_xyz > 0, "invalid block size");
     static_assert(tile_size_xyz > 0, "invalid tile size");
 
-    template <typename Level, typename F, typename... Args>
+    template <typename F, typename... Args>
     __device__ __forceinline__
-    static void execute_block_level(
+    static void execute_per_layer(
+            const int istart, const int jstart,
+            const int iend, const int jend,
+            F fun, Args... args
+    )
+    {
+#pragma unroll(unroll_factor_y)
+        for (int dj = 0; dj < tile_factor_y; dj++)
+        {
+            const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
+            const int j = jstart + blockIdx.y * tile_size_y + dj * block_size_y + thread_idx_y;
+            if (block_size_y > 1 && j >= jend) break;
+
+#pragma unroll(unroll_factor_x)
+            for (int di = 0; di < tile_factor_x; di++)
+            {
+                const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
+                const int i = istart + blockIdx.x * tile_size_x + di * block_size_x + thread_idx_x;
+                if (block_size_x > 1 && i >= iend) break;
+
+                fun(i, j, args...);
+            }
+        }
+    }
+
+    template <typename F, typename... Args>
+    __device__ __forceinline__
+    static void execute_block(
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend,
             F fun, Args... args
@@ -153,41 +139,15 @@ struct TilingStrategy
         {
             const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
             const int k = kstart + blockIdx.z * tile_size_z + dk * block_size_z + thread_idx_z;
-            if (block_size_z > 1 && k >= kend) break;
+            if (block_size_z > 1 && kend - k <= 0 ) break;
 
-#pragma unroll(unroll_factor_y)
-            for (int dj = 0; dj < tile_factor_y; dj++)
-            {
-                const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
-                const int j = jstart + blockIdx.y * tile_size_y + dj * block_size_y + thread_idx_y;
-                if (block_size_y > 1 && j >= jend) break;
-
-#pragma unroll(unroll_factor_x)
-                for (int di = 0; di < tile_factor_x; di++)
-                {
-                    const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
-                    const int i = istart + blockIdx.x * tile_size_x + di * block_size_x + thread_idx_x;
-                    if (block_size_x > 1 && i >= iend) break;
-
-                    fun(i, j, k, Level(k, kstart, kend), args...);
-                }
+            Level level(k - kstart, kend - k - 1);
+            if (level.distance_to_start() <= 2 || level.distance_to_end() <= 2) {
+                TilingStrategy::execute_per_layer(istart, jstart, iend, jend, fun, k, level, args...);
+            } else {
+                TilingStrategy::execute_per_layer(istart, jstart, iend, jend, fun, k, InteriorLevel {}, args...);
             }
         }
-    }
-
-    template <typename F, typename... Args>
-    __device__ __forceinline__
-    static void execute_block(
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            F fun, Args... args
-    )
-    {
-        TilingStrategy::execute_block_level<Level>(
-                istart, jstart, kstart,
-                iend, jend, kend,
-                fun, args...
-        );
     }
 
     template <typename F, typename... Args>

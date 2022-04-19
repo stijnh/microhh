@@ -164,9 +164,9 @@ namespace
     template<typename TF>
     struct advec_v_body
     {
-            template <typename L>
+            template <typename Level>
             __forceinline__ __device__ void operator()(
-                       const int i, const int j, const int k, L level,
+                        const int i, const int j, const int k, const Level level,
                        TF* __restrict__ vt, const TF* __restrict__ u,
                        const TF* __restrict__ v,  const TF* __restrict__ w,
                        const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -285,9 +285,9 @@ namespace
    template<typename TF>
    struct advec_w_body
    {
-        template <typename L>
+       template <typename Level>
        __forceinline__ __device__ void operator()(
-                       const int i, const int j, const int k, L level,
+                       const int i, const int j, const int k, const Level level,
                        TF* __restrict__ wt, const TF* __restrict__ u,
                        const TF* __restrict__ v,  const TF* __restrict__ w,
                        const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -359,7 +359,7 @@ namespace
 
                     - ( rhoref[k-1] * fabs(interp2(w[ijk-kk1    ], w[ijk    ])) * interp3_ws(w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1]) ) / rhorefh[k] * dzhi[k];
             }
-            else if ( (level.distance_to_start() >= 2) && (level.distance_to_end() <= 2) )
+            else if ( (level.distance_to_start() >= 2) && (level.distance_to_end() >= 2) )
             {
                 wt[ijk] +=
                     // w*dw/dz
@@ -398,7 +398,7 @@ namespace
     {
         template <typename Level>
         __forceinline__ __device__ void operator()(
-                const int i, const int j, const int k, Level level,
+                const int i, const int j, const int k, const Level level,
                 TF* __restrict__ st, const TF* __restrict__ s,
                 const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
                 const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -577,8 +577,7 @@ namespace
     }
 
     template<typename TF>
-    struct advec_s_lim_body
-    {
+    struct advec_s_lim_body {
         template <typename Level>
         __forceinline__ __device__ void operator()(
                 const int i, const int j, const int k, const Level level,
@@ -603,7 +602,7 @@ namespace
                      - ( flux_lim_g(v[ijk+jj1], s[ijk-jj1], s[ijk    ], s[ijk+jj1], s[ijk+jj2])
                        - flux_lim_g(v[ijk    ], s[ijk-jj2], s[ijk-jj1], s[ijk    ], s[ijk+jj1]) ) * dyi;
 
-            if (level.distance_to_start() >= 2 && level.distance_to_end() <= 2)
+            if (level.distance_to_start() >= 2 && level.distance_to_end() >= 2)
             {
                 st[ijk] +=
                          - ( rhorefh[k+1] * flux_lim_g(w[ijk+kk], s[ijk-kk1], s[ijk    ], s[ijk+kk1], s[ijk+kk2])
@@ -659,9 +658,9 @@ namespace
 
     template<typename TF>
     struct calc_cfl_body {
-        template <typename L>
+        template <typename Level>
         __forceinline__ __device__ void operator()(
-                        const int i, const int j, const int k, L level,
+                        const int i, const int j, const int k, const Level level,
                         TF* const __restrict__ tmp1,
                         const TF* __restrict__ u, const TF* __restrict__ v, const TF* __restrict__ w,
                         const TF* __restrict__ dzi, const TF dxi, const TF dyi,
@@ -759,6 +758,8 @@ template<typename TF>
 void Advec_2i5<TF>::exec(Stats<TF>& stats)
 {
     const Grid_data<TF>& gd = grid.get_grid_data();
+    dim3 gridGPU = DefaultTiling::grid_size(gd);
+    dim3 blockGPU = DefaultTiling::block_size();
 
     DefaultTiling::launch(
         gd,advec_u_body<TF>(),
@@ -767,9 +768,6 @@ void Advec_2i5<TF>::exec(Stats<TF>& stats)
         fields.rhoref_g, fields.rhorefh_g, gd.dzi_g, gd.dxi, gd.dyi,
         gd.icells, gd.ijcells);
     cuda_check_error();
-
-    dim3 gridGPU = DefaultTiling::grid_size(gd);
-    dim3 blockGPU = DefaultTiling::block_size();
 
     advec_v_g<TF><<<gridGPU, blockGPU>>>(
         fields.mt.at("v")->fld_g,

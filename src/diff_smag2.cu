@@ -67,7 +67,7 @@ namespace
             const int ij  = i + j*jj;
             const int ijk = i + j*jj + k*kk;
 
-            if (level.distance_to_start() == 0 && surface_model == Surface_model::Enabled)
+            if (k == kstart && surface_model == Surface_model::Enabled)
             {
                 strain2[ijk] = TF(2.)*(
                     // du/dx + du/dx
@@ -174,6 +174,7 @@ namespace
                 TF* __restrict__ z0m,
                 TF* __restrict__ z,
                 const TF tPri,
+                const int kstart,
                 const int jj,     const int kk)
         {
             const TF n_mason = TF(2);
@@ -181,13 +182,13 @@ namespace
             const int ij  = i + j*jj;
             const int ijk = i + j*jj + k*kk;
 
-            if (level.distance_to_start() == 0 && surface_model == Surface_model::Enabled)
+            if (k == kstart && surface_model == Surface_model::Enabled)
             {
                 // calculate smagorinsky constant times filter width squared, use wall damping according to Mason
                 TF RitPrratio = bgradbot[ij] / evisc[ijk] * tPri;
                 RitPrratio = fmin(RitPrratio, TF(1.-Constants::dsmall));
 
-                const TF mlen = std::pow(TF(1.)/(TF(1.)/mlen0[k] + TF(1.)/(std::pow(Constants::kappa<TF>*(z[k]+z0m[ij]), n_mason))), TF(1.)/n_mason);
+                const TF mlen = std::pow(TF(1.)/(TF(1.)/mlen0[k] + TF(1.)/(std::pow(Constants::kappa<TF>*(z[kstart]+z0m[ij]), n_mason))), TF(1.)/n_mason);
                 evisc[ijk] = fm::pow2(mlen) * sqrt(evisc[ijk] * (TF(1.)-RitPrratio));
             }
             else if (surface_model == Surface_model::Enabled)
@@ -232,6 +233,7 @@ namespace
             evisc_body<TF, surface_model>(),
             evisc, N2, bgradbot, mlen0, z0m, z,
             tPri,
+            kstart,
             jj, kk);
     }
 
@@ -352,6 +354,7 @@ namespace
                         TF* __restrict__ dzi, TF* __restrict__ dzhi, const TF dxi, const TF dyi,
                         TF* __restrict__ rhoref, TF* __restrict__ rhorefh,
                         const TF visc,
+                        const int kstart, const int kend,
                         const int jj,     const int kk)
         {
             const int ii  = 1;
@@ -382,7 +385,7 @@ namespace
             const TF evisctw = evisc[ijk   ] + visc;
             const TF eviscbw = evisc[ijk-kk] + visc;
 
-            if (level.distance_to_start() == 0 && surface_model == Surface_model::Enabled)
+            if (k == kstart && surface_model == Surface_model::Enabled)
             {
                 ut[ijk] +=
                     // du/dx + du/dx
@@ -392,8 +395,8 @@ namespace
                     + (  eviscnu*((u[ijk+jj]-u[ijk   ])*dyi  + (v[ijk+jj]-v[ijk-ii+jj])*dxi)
                        - eviscsu*((u[ijk   ]-u[ijk-jj])*dyi  + (v[ijk   ]-v[ijk-ii   ])*dxi) ) * dyi
                     // du/dz + dw/dx
-                    + (  rhorefh[k+1] * evisctu*((u[ijk+kk]-u[ijk   ])* dzhi[k+1] + (w[ijk+kk]-w[ijk-ii+kk])*dxi)
-                       + rhorefh[k  ] * fluxbotu[ij] ) / rhoref[k] * dzi[k];
+                    + (  rhorefh[kstart+1] * evisctu*((u[ijk+kk]-u[ijk   ])* dzhi[kstart+1] + (w[ijk+kk]-w[ijk-ii+kk])*dxi)
+                       + rhorefh[kstart  ] * fluxbotu[ij] ) / rhoref[kstart] * dzi[kstart];
 
                 vt[ijk] +=
                     // dv/dx + du/dy
@@ -406,7 +409,7 @@ namespace
                     + (  rhorefh[k+1] * evisctv*((v[ijk+kk]-v[ijk   ])*dzhi[k+1] + (w[ijk+kk]-w[ijk-jj+kk])*dyi)
                        + rhorefh[k  ] * fluxbotv[ij] ) / rhoref[k] * dzi[k];
             }
-            else if (level.distance_to_end() == 0 && surface_model == Surface_model::Enabled)
+            else if (k == kend-1 && surface_model == Surface_model::Enabled)
             {
                 ut[ijk] +=
                     // du/dx + du/dx
@@ -416,8 +419,8 @@ namespace
                     + (  eviscnu*((u[ijk+jj]-u[ijk   ])*dyi  + (v[ijk+jj]-v[ijk-ii+jj])*dxi)
                        - eviscsu*((u[ijk   ]-u[ijk-jj])*dyi  + (v[ijk   ]-v[ijk-ii   ])*dxi) ) * dyi
                     // du/dz + dw/dx
-                    + (- rhorefh[k+1] * fluxtopu[ij]
-                       - rhorefh[k] * eviscbu*((u[ijk   ]-u[ijk-kk])* dzhi[k] + (w[ijk   ]-w[ijk-ii   ])*dxi) ) / rhoref[k] * dzi[k];
+                    + (- rhorefh[kend  ] * fluxtopu[ij]
+                       - rhorefh[kend-1] * eviscbu*((u[ijk   ]-u[ijk-kk])* dzhi[kend-1] + (w[ijk   ]-w[ijk-ii   ])*dxi) ) / rhoref[kend-1] * dzi[kend-1];
 
                 vt[ijk] +=
                     // dv/dx + du/dy
@@ -505,6 +508,7 @@ namespace
                 dzi, dzhi, dxi, dyi,
                 rhoref, rhorefh,
                 visc,
+                kstart, kend,
                 jj, kk);
     }
 
@@ -518,13 +522,14 @@ namespace
                       TF* __restrict__ dzi, TF* __restrict__ dzhi, const TF dxidxi, const TF dyidyi,
                       TF* __restrict__ rhoref, TF* __restrict__ rhorefh,
                       const TF tPri, const TF visc,
+                      const int kstart, const int kend,
                       const int jj,     const int kk)
         {
             const int ii  = 1;
             const int ij  = i + j*jj;
             const int ijk = i + j*jj + k*kk;
 
-            if (level.distance_to_start() == 0 && surface_model == Surface_model::Enabled)
+            if (k == kstart && surface_model == Surface_model::Enabled)
             {
                 const TF evisce = TF(0.5)*(evisc[ijk   ]+evisc[ijk+ii])*tPri + visc;
                 const TF eviscw = TF(0.5)*(evisc[ijk-ii]+evisc[ijk   ])*tPri + visc;
@@ -540,7 +545,7 @@ namespace
                     + (  rhorefh[k+1] * evisct*(a[ijk+kk]-a[ijk   ])*dzhi[k+1]
                        + rhorefh[k  ] * fluxbot[ij] ) / rhoref[k] * dzi[k];
             }
-            else if (level.distance_to_end() == 0 && surface_model == Surface_model::Enabled)
+            else if (k == kend-1 && surface_model == Surface_model::Enabled)
             {
                 const TF evisce = TF(0.5)*(evisc[ijk   ]+evisc[ijk+ii])*tPri + visc;
                 const TF eviscw = TF(0.5)*(evisc[ijk-ii]+evisc[ijk   ])*tPri + visc;
@@ -596,6 +601,7 @@ namespace
                 dzi, dzhi, dxidxi, dyidyi,
                 rhoref, rhorefh,
                 tPri, visc,
+                kstart, kend,
                 jj, kk);
     }
 
@@ -603,7 +609,7 @@ namespace
     struct calc_dnmul_body {
         template <typename Level>
         __device__ __forceinline__
-        void operator()(const int i, const int j, const int k, const Level,
+        void operator()(const int i, const int j, const int k, const Level level,
                           TF* __restrict__ dnmul, TF* __restrict__ evisc,
                           TF* __restrict__ dzi, TF tPrfac, const TF dxidxi, const TF dyidyi,
                           const int jj,     const int kk)
