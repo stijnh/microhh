@@ -141,7 +141,7 @@ namespace
     };
 
     template<typename TF, typename Tiling = DefaultTiling>
-    TILING_KERNEL(Tiling)
+    ELEMENTWISE_KERNEL(Tiling)
     void advec_u_g(TF* __restrict__ ut, const TF* __restrict__ u,
                     const TF* __restrict__ v,  const TF* __restrict__ w,
                     const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -165,7 +165,7 @@ namespace
     struct advec_v_body
     {
             template <typename Level>
-            __forceinline__ __device__ void operator()(
+            CUDA_DEVICE void operator()(
                         const int i, const int j, const int k, const Level level,
                        TF* __restrict__ vt, const TF* __restrict__ u,
                        const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -262,7 +262,7 @@ namespace
     };
 
     template<typename TF, typename Tiling = DefaultTiling>
-    TILING_KERNEL(Tiling)
+    ELEMENTWISE_KERNEL(Tiling)
     void advec_v_g(TF* __restrict__ vt, const TF* __restrict__ u,
                    const TF* __restrict__ v,  const TF* __restrict__ w,
                    const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -271,7 +271,7 @@ namespace
                    const int istart, const int jstart, const int kstart,
                    const int iend,   const int jend,   const int kend)
    {
-        Tiling::execute_block(
+        Tiling::process_cta(
                 istart, jstart, kstart,
                 iend, jend, kend,
                 advec_v_body<TF>(),
@@ -286,7 +286,7 @@ namespace
    struct advec_w_body
    {
        template <typename Level>
-       __forceinline__ __device__ void operator()(
+       CUDA_DEVICE void operator()(
                        const int i, const int j, const int k, const Level level,
                        TF* __restrict__ wt, const TF* __restrict__ u,
                        const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -373,7 +373,7 @@ namespace
    };
 
    template<typename TF, typename Tiling = DefaultTiling>
-   TILING_KERNEL(Tiling)
+   ELEMENTWISE_KERNEL(Tiling)
    void advec_w_g(TF* __restrict__ wt, const TF* __restrict__ u,
                    const TF* __restrict__ v,  const TF* __restrict__ w,
                    const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
@@ -382,7 +382,7 @@ namespace
                    const int istart, const int jstart, const int kstart,
                    const int iend,   const int jend,   const int kend)
    {
-        Tiling::execute_block(
+       Tiling::process_cta(
                 istart, jstart, kstart,
                 iend, jend, kend,
                 advec_w_body<TF>(),
@@ -397,7 +397,7 @@ namespace
     struct advec_s_body
     {
         template <typename Level>
-        __forceinline__ __device__ void operator()(
+        CUDA_DEVICE void operator()(
                 const int i, const int j, const int k, const Level level,
                 TF* __restrict__ st, const TF* __restrict__ s,
                 const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -493,7 +493,7 @@ namespace
     };
 
     template<typename TF, typename Tiling = DefaultTiling>
-    TILING_KERNEL(Tiling)
+    ELEMENTWISE_KERNEL(Tiling)
     void advec_s_g(
             TF* __restrict__ st, const TF* __restrict__ s,
             const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -503,7 +503,7 @@ namespace
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend)
     {
-        Tiling::execute_block(
+        Tiling::process_cta(
                 istart, jstart, kstart,
                 iend, jend, kend,
                 advec_s_body<TF>(),
@@ -579,7 +579,7 @@ namespace
     template<typename TF>
     struct advec_s_lim_body {
         template <typename Level>
-        __forceinline__ __device__ void operator()(
+        CUDA_DEVICE void operator()(
                 const int i, const int j, const int k, const Level level,
                 TF* __restrict__ st, const TF* __restrict__ s,
                 const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -635,7 +635,7 @@ namespace
     };
 
     template<typename TF, typename Tiling = DefaultTiling>
-    TILING_KERNEL(Tiling)
+    ELEMENTWISE_KERNEL(Tiling)
     void advec_s_lim_g(
             TF* __restrict__ st, const TF* __restrict__ s,
             const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
@@ -645,7 +645,7 @@ namespace
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend)
     {
-        Tiling::execute_block(
+        Tiling::process_cta(
                 istart, jstart, kstart,
                 iend, jend, kend,
                 advec_s_lim_body<TF>(),
@@ -659,7 +659,7 @@ namespace
     template<typename TF>
     struct calc_cfl_body {
         template <typename Level>
-        __forceinline__ __device__ void operator()(
+        CUDA_DEVICE void operator()(
                         const int i, const int j, const int k, const Level level,
                         TF* const __restrict__ tmp1,
                         const TF* __restrict__ u, const TF* __restrict__ v, const TF* __restrict__ w,
@@ -694,7 +694,7 @@ namespace
     };
 
     template<typename TF, typename Tiling = DefaultTiling>
-    TILING_KERNEL(Tiling)
+    ELEMENTWISE_KERNEL(Tiling)
     void calc_cfl_g(TF* const __restrict__ tmp1,
                     const TF* __restrict__ u, const TF* __restrict__ v, const TF* __restrict__ w,
                     const TF* __restrict__ dzi, const TF dxi, const TF dyi,
@@ -702,7 +702,7 @@ namespace
                     const int istart, const int jstart, const int kstart,
                     const int iend, const int jend, const int kend)
     {
-        Tiling::execute_block(
+        Tiling::process_cta(
                 istart, jstart, kstart,
                 iend, jend, kend,
                 calc_cfl_body<TF>(),
@@ -731,7 +731,7 @@ template<typename TF>
 double Advec_2i5<TF>::get_cfl(const double dt)
 {
     const Grid_data<TF>& gd = grid.get_grid_data();
-    dim3 gridGPU = DefaultTiling ::grid_size(gd.imax, gd.jmax, gd.kcells);
+    dim3 gridGPU = DefaultTiling::grid_size(gd.imax, gd.jmax, gd.kcells);
     dim3 blockGPU = DefaultTiling::block_size();
 
     auto tmp1 = fields.get_tmp_g();
@@ -757,19 +757,20 @@ double Advec_2i5<TF>::get_cfl(const double dt)
 template<typename TF>
 void Advec_2i5<TF>::exec(Stats<TF>& stats)
 {
-    const Grid_data<TF>& gd = grid.get_grid_data();
-    dim3 gridGPU = DefaultTiling::grid_size(gd);
-    dim3 blockGPU = DefaultTiling::block_size();
+    using Tiling = DefaultTiling;
 
-    DefaultTiling::launch(
-        gd,advec_u_body<TF>(),
+    const Grid_data<TF>& gd = grid.get_grid_data();
+    launch_elementwise_kernel<Tiling>(
+        gd, advec_u_body<TF>(),
         fields.mt.at("u")->fld_g,
         fields.mp.at("u")->fld_g, fields.mp.at("v")->fld_g, fields.mp.at("w")->fld_g,
         fields.rhoref_g, fields.rhorefh_g, gd.dzi_g, gd.dxi, gd.dyi,
         gd.icells, gd.ijcells);
-    cuda_check_error();
 
-    advec_v_g<TF><<<gridGPU, blockGPU>>>(
+    dim3 gridGPU = Tiling::grid_size(gd);
+    dim3 blockGPU = Tiling::block_size();
+
+    advec_v_g<TF, Tiling><<<gridGPU, blockGPU>>>(
         fields.mt.at("v")->fld_g,
         fields.mp.at("u")->fld_g, fields.mp.at("v")->fld_g, fields.mp.at("w")->fld_g,
         fields.rhoref_g, fields.rhorefh_g, gd.dzi_g, gd.dxi, gd.dyi,
@@ -778,7 +779,7 @@ void Advec_2i5<TF>::exec(Stats<TF>& stats)
         gd.iend, gd.jend, gd.kend);
     cuda_check_error();
 
-    advec_w_g<TF><<<gridGPU, blockGPU>>>(
+    advec_w_g<TF, Tiling><<<gridGPU, blockGPU>>>(
         fields.mt.at("w")->fld_g,
         fields.mp.at("u")->fld_g, fields.mp.at("v")->fld_g, fields.mp.at("w")->fld_g,
         fields.rhoref_g, fields.rhorefh_g, gd.dzhi_g, gd.dxi, gd.dyi,
@@ -789,7 +790,7 @@ void Advec_2i5<TF>::exec(Stats<TF>& stats)
 
     for (const std::string& s : sp_limit)
     {
-        advec_s_lim_g<TF><<<gridGPU, blockGPU>>>(
+        advec_s_lim_g<TF, Tiling><<<gridGPU, blockGPU>>>(
                 fields.st.at(s)->fld_g, fields.sp.at(s)->fld_g,
                 fields.mp.at("u")->fld_g, fields.mp.at("v")->fld_g, fields.mp.at("w")->fld_g,
                 fields.rhoref_g, fields.rhorefh_g,
@@ -802,7 +803,7 @@ void Advec_2i5<TF>::exec(Stats<TF>& stats)
 
     for (const std::string& s : sp_no_limit)
     {
-        advec_s_g<TF><<<gridGPU, blockGPU>>>(
+        advec_s_g<TF, Tiling><<<gridGPU, blockGPU>>>(
                 fields.st.at(s)->fld_g, fields.sp.at(s)->fld_g,
                 fields.mp.at("u")->fld_g, fields.mp.at("v")->fld_g, fields.mp.at("w")->fld_g,
                 fields.rhoref_g, fields.rhorefh_g,

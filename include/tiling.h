@@ -10,51 +10,10 @@
 #define CUDA_ASSUME(expr) do{} while(0)
 #endif
 
-#define TILING_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
+#define CUDA_DEVICE __device__ __forceinline__
+#define CUDA_HOST_DEVICE __host__ __device__ __forceinline__
+#define ELEMENTWISE_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
 
-template <typename Strategy, typename F, typename... Args>
-TILING_KERNEL(Strategy)
-static void tiling_kernel(
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            F fun, Args... args
-)
-{
-    Strategy::execute_block(istart, jstart, kstart, iend, jend, kend, fun, args...);
-}
-
-struct Level {
-    __host__ __device__ __forceinline__
-    Level(int dist_start, int dist_end): dist_start_(dist_start), dist_end_(dist_end) {
-
-    }
-
-    __host__ __device__ __forceinline__
-    int distance_to_start() const {
-        return dist_start_;
-    }
-
-    __host__ __device__ __forceinline__
-    int distance_to_end() const {
-        return dist_end_;
-    }
-
-private:
-    int dist_start_;
-    int dist_end_;
-};
-
-struct InteriorLevel {
-    __host__ __device__ __forceinline__
-    int distance_to_start() const {
-        return INT_MAX;
-    }
-
-    __host__ __device__ __forceinline__
-    int distance_to_end() const {
-        return INT_MAX;
-    }
-};
 
 template <
         unsigned int block_size_x_,
@@ -88,16 +47,21 @@ struct TilingStrategy
     static constexpr unsigned int block_size_xyz = block_size_x * block_size_y * block_size_z;
     static constexpr unsigned int tile_size_xyz = tile_size_x * tile_size_y * tile_size_z;
 
+    using single_layer_strategy = TilingStrategy<
+            block_size_x, block_size_y, 1,
+            tile_factor_x, tile_factor_y, 1,
+            unroll_factor_x, unroll_factor_y, 1,
+            blocks_per_sm>;
+
     static_assert(block_size_xyz > 0, "invalid block size");
     static_assert(tile_size_xyz > 0, "invalid tile size");
 
     template <typename F, typename... Args>
-    __device__ __forceinline__
-    static void execute_per_layer(
+    CUDA_DEVICE
+    static void process_cta_layer(
             const int istart, const int jstart,
             const int iend, const int jend,
-            F fun, Args... args
-    )
+            F fun, Args... args)
     {
 #pragma unroll(unroll_factor_y)
         for (int dj = 0; dj < tile_factor_y; dj++)
@@ -119,55 +83,41 @@ struct TilingStrategy
     }
 
     template <typename F, typename... Args>
-    __device__ __forceinline__
-    static void execute_block(
+    CUDA_DEVICE
+    static void process_cta(
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend,
-            F fun, Args... args
-    )
+            F fun, Args... args)
     {
-        CUDA_ASSUME(blockDim.x == block_size_x);
-        CUDA_ASSUME(blockDim.y == block_size_y);
-        CUDA_ASSUME(blockDim.z == block_size_z);
+        struct Level {
+            CUDA_HOST_DEVICE
+            Level(int dist_start, int dist_end): dist_start_(dist_start), dist_end_(dist_end) {}
 
-        CUDA_ASSUME(threadIdx.x < block_size_x);
-        CUDA_ASSUME(threadIdx.y < block_size_y);
-        CUDA_ASSUME(threadIdx.z < block_size_z);
+            CUDA_HOST_DEVICE
+            int distance_to_start() const {
+                return dist_start_;
+            }
+
+            CUDA_HOST_DEVICE
+            int distance_to_end() const {
+                return dist_end_;
+            }
+
+          private:
+            int dist_start_;
+            int dist_end_;
+        };
 
 #pragma unroll(unroll_factor_z)
         for (int dk = 0; dk < tile_factor_z; dk++)
         {
             const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
             const int k = kstart + blockIdx.z * tile_size_z + dk * block_size_z + thread_idx_z;
-            if (block_size_z > 1 && kend - k <= 0 ) break;
+            if (block_size_z > 1 && k >= kend) break;
 
             Level level(k - kstart, kend - k - 1);
-            if (level.distance_to_start() <= 2 || level.distance_to_end() <= 2) {
-                TilingStrategy::execute_per_layer(istart, jstart, iend, jend, fun, k, level, args...);
-            } else {
-                TilingStrategy::execute_per_layer(istart, jstart, iend, jend, fun, k, InteriorLevel {}, args...);
-            }
+            process_cta_layer(istart, jstart, iend, jend, fun, k, level, args...);
         }
-    }
-
-    template <typename F, typename... Args>
-    static void launch(
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            F fun, Args... args
-    )
-    {
-        dim3 grid = grid_size(istart, jstart, kstart, iend, jend, kend);
-        dim3 block = block_size();
-
-        tiling_kernel<TilingStrategy><<<grid, block>>>(istart, jstart, kstart, iend, jend, kend, fun, args...);
-        cuda_check_error();
-    }
-
-    template <typename TF, typename F, typename... Args>
-    static void launch(const Grid_data<TF>& gd, F fun, Args... args)
-    {
-        return launch(gd.istart, gd.jstart, gd.kstart, gd.iend, gd.jend, gd.kend, fun, args...);
     }
 
     static dim3 grid_size(const int itot, const int jtot, const int ktot)
@@ -181,8 +131,7 @@ struct TilingStrategy
 
     static dim3 grid_size(
             const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend
-    )
+            const int iend, const int jend, const int kend)
     {
         return grid_size(iend - istart, jend - jstart, kend - kstart);
     }
@@ -201,4 +150,39 @@ struct TilingStrategy
 
 using DefaultTiling = TilingStrategy<256, 1, 1, 1, 1, 1, 1, 1, 1>;
 
+
+template <typename Strategy, typename F, typename... Args>
+ELEMENTWISE_KERNEL(Strategy)
+static void elementwise_kernel(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args)
+{
+    Strategy::process_cta(istart, jstart, kstart, iend, jend, kend, fun, args...);
+}
+
+template <typename Strategy = DefaultTiling, typename F, typename ...Args>
+static void launch_elementwise_kernel(
+        const int istart, const int jstart, const int kstart,
+        const int iend, const int jend, const int kend,
+        F fun, Args... args)
+{
+    dim3 block_size = Strategy::block_size();
+    dim3 grid_size = Strategy::grid_size(istart, jstart, kstart, iend, jend, kend);
+
+    elementwise_kernel<Strategy><<<grid_size, block_size>>>(
+        istart, jstart, kstart,
+        iend, jend, kend,
+        fun, args...);
+    cuda_check_error();
+}
+
+template <typename Strategy = DefaultTiling, typename TF, typename F, typename ...Args>
+static void launch_elementwise_kernel(const Grid_data<TF>& gd, F fun, Args... args)
+{
+    launch_elementwise_kernel<Strategy, F, Args...>(
+            gd.istart, gd.jstart, gd.kstart,
+            gd.iend, gd.jend, gd.kend,
+            fun, args...);
+}
 #endif
