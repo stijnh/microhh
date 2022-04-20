@@ -27,6 +27,22 @@
 #ifndef TOOLS_H
 #define TOOLS_H
 
+#if defined(__CUDACC__)
+#if __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 2 // since 11.2
+#define CUDA_ASSUME(expr) __builtin_assume(expr)
+#else
+#define CUDA_ASSUME(expr) do{} while(0)
+#endif
+
+#define CUDA_DEVICE __device__ __forceinline__
+#define CUDA_HOST_DEVICE __host__ __device__ __forceinline__
+#else
+#define CUDA_ASSUME(expr) do{} while(0)
+#define CUDA_DEVICE
+#define CUDA_HOST_DEVICE
+#endif
+
+
 /* CUDA error checking, from: http://choorucode.com/2011/03/02/how-to-do-error-checking-in-cuda/
    In debug mode, CUDACHECKS is defined and all kernel calls are checked with cudaCheckError().
    All CUDA api calls are always checked with cudaSafeCall() */

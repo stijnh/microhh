@@ -4,14 +4,6 @@
 #include "grid.h"
 #include "tools.h"
 
-#if defined(__CUDACC__) && __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 2 // since 11.2
-#define CUDA_ASSUME(expr) __builtin_assume(expr)
-#else
-#define CUDA_ASSUME(expr) do{} while(0)
-#endif
-
-#define CUDA_DEVICE __device__ __forceinline__
-#define CUDA_HOST_DEVICE __host__ __device__ __forceinline__
 #define ELEMENTWISE_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
 
 
@@ -103,9 +95,20 @@ struct TilingStrategy
                 return dist_end_;
             }
 
-          private:
+        private:
             int dist_start_;
             int dist_end_;
+        };
+        struct InteriorLevel {
+            CUDA_HOST_DEVICE
+            int distance_to_start() const {
+                return INT_MAX;
+            }
+
+            CUDA_HOST_DEVICE
+            int distance_to_end() const {
+                return INT_MAX;
+            }
         };
 
 #pragma unroll(unroll_factor_z)
@@ -116,7 +119,12 @@ struct TilingStrategy
             if (block_size_z > 1 && k >= kend) break;
 
             Level level(k - kstart, kend - k - 1);
-            process_cta_layer(istart, jstart, iend, jend, fun, k, level, args...);
+
+            if (level.distance_to_start() > 2 && level.distance_to_end() > 2) {
+                process_cta_layer(istart, jstart, iend, jend, fun, k, InteriorLevel {}, args...);
+            } else {
+                process_cta_layer(istart, jstart, iend, jend, fun, k, level, args...);
+            }
         }
     }
 
