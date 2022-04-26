@@ -60,14 +60,14 @@ struct TilingStrategy
         {
             const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
             const int j = jstart + blockIdx.y * tile_size_y + dj * block_size_y + thread_idx_y;
-            if (block_size_y > 1 && j >= jend) break;
+            if (tile_size_y > 1 && j >= jend) break;
 
 #pragma unroll(unroll_factor_x)
             for (int di = 0; di < tile_factor_x; di++)
             {
                 const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
                 const int i = istart + blockIdx.x * tile_size_x + di * block_size_x + thread_idx_x;
-                if (block_size_x > 1 && i >= iend) break;
+                if (tile_size_x > 1 && i >= iend) break;
 
                 fun(i, j, args...);
             }
@@ -116,7 +116,7 @@ struct TilingStrategy
         {
             const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
             const int k = kstart + blockIdx.z * tile_size_z + dk * block_size_z + thread_idx_z;
-            if (block_size_z > 1 && k >= kend) break;
+            if (tile_size_z > 1 && k >= kend) break;
 
             Level level(k - kstart, kend - k - 1);
 
