@@ -1,11 +1,104 @@
-#ifndef TILING
-#define TILING
+#ifndef TILING_H
+#define TILING_H
 
 #include "grid.h"
 #include "tools.h"
 
 #define ELEMENTWISE_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
 
+namespace levels {
+    struct General
+    {
+        CUDA_HOST_DEVICE
+        General(int k, int kstart, int kend)
+        {
+            dist_start_ = k - kstart;
+            dist_end_ = kend - k - 1;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_start() const
+        {
+            return dist_start_;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_end() const
+        {
+            return dist_end_;
+        }
+
+    private:
+        int dist_start_;
+        int dist_end_;
+    };
+
+    struct Top
+    {
+        CUDA_HOST_DEVICE
+        Top(int k, int kstart, int kend)
+        {
+            dist_start_ = k - kstart;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_start() const
+        {
+            return dist_start_;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_end() const
+        {
+            return INT_MAX;
+        }
+
+    private:
+        int dist_start_;
+    };
+
+    struct Interior
+    {
+        CUDA_HOST_DEVICE
+        Interior(int k, int kstart, int kend) {}
+
+        CUDA_HOST_DEVICE
+        int distance_to_start() const
+        {
+            return INT_MAX;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_end() const
+        {
+            return INT_MAX;
+        }
+    };
+
+    struct Bottom
+    {
+        CUDA_HOST_DEVICE
+        Bottom(int k, int kstart, int kend)
+        {
+            dist_end_ = kend - k - 1;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_start() const
+        {
+            return INT_MAX;
+        }
+
+        CUDA_HOST_DEVICE
+        int distance_to_end() const
+        {
+            return dist_end_;
+        }
+
+    private:
+        int dist_end_;
+    };
+}
 
 template <
         unsigned int block_size_x_,
@@ -74,43 +167,13 @@ struct TilingStrategy
         }
     }
 
-    template <typename F, typename... Args>
+    template <typename Level, typename F, typename... Args>
     CUDA_DEVICE
-    static void process_cta(
+    static void process_cta_custom_level(
             const int istart, const int jstart, const int kstart,
             const int iend, const int jend, const int kend,
             F fun, Args... args)
     {
-        struct Level {
-            CUDA_HOST_DEVICE
-            Level(int dist_start, int dist_end): dist_start_(dist_start), dist_end_(dist_end) {}
-
-            CUDA_HOST_DEVICE
-            int distance_to_start() const {
-                return dist_start_;
-            }
-
-            CUDA_HOST_DEVICE
-            int distance_to_end() const {
-                return dist_end_;
-            }
-
-        private:
-            int dist_start_;
-            int dist_end_;
-        };
-        struct InteriorLevel {
-            CUDA_HOST_DEVICE
-            int distance_to_start() const {
-                return INT_MAX;
-            }
-
-            CUDA_HOST_DEVICE
-            int distance_to_end() const {
-                return INT_MAX;
-            }
-        };
-
 #pragma unroll(unroll_factor_z)
         for (int dk = 0; dk < tile_factor_z; dk++)
         {
@@ -118,14 +181,65 @@ struct TilingStrategy
             const int k = kstart + blockIdx.z * tile_size_z + dk * block_size_z + thread_idx_z;
             if (tile_size_z > 1 && k >= kend) break;
 
-            Level level(k - kstart, kend - k - 1);
-
-            if (level.distance_to_start() > 2 && level.distance_to_end() > 2) {
-                process_cta_layer(istart, jstart, iend, jend, fun, k, InteriorLevel {}, args...);
-            } else {
-                process_cta_layer(istart, jstart, iend, jend, fun, k, level, args...);
-            }
+            Level level(k, kstart, kend);
+            process_cta_layer(istart, jstart, iend, jend, fun, k, level, args...);
         }
+    }
+
+    template <typename F, typename... Args>
+    CUDA_DEVICE
+    static void process_cta(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args)
+    {
+        process_cta_custom_level<levels::General>(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                fun, args...
+        );
+    }
+
+    template <typename F, typename... Args>
+    CUDA_DEVICE
+    static void process_cta_top(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args)
+    {
+        process_cta_custom_level<levels::Top>(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                fun, args...
+        );
+    }
+
+    template <typename F, typename... Args>
+    CUDA_DEVICE
+    static void process_cta_middle(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args)
+    {
+        process_cta_custom_level<levels::Interior>(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                fun, args...
+        );
+    }
+
+    template <typename F, typename... Args>
+    CUDA_DEVICE
+    static void process_cta_bottom(
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            F fun, Args... args)
+    {
+        process_cta_custom_level<levels::Bottom>(
+                istart, jstart, kstart,
+                iend, jend, kend,
+                fun, args...
+        );
     }
 
     static dim3 grid_size(const int itot, const int jtot, const int ktot)

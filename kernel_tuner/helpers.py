@@ -111,7 +111,7 @@ def float_name(TF):
     else:
         raise "unknown type: {}".format(TF)
 
-def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning, extra_params=dict()):
+def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning, extra_params=dict(), nlayers=None):
     # Tune parameters
     tune_params = OrderedDict()
     tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256]
@@ -131,7 +131,7 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
     strategy_options = dict()
 
     if extra_tuning:
-        tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256, 512, 1024]
+        tune_params["BLOCK_SIZE_X"] = [32] #[1, 2, 4, 8, 16, 32, 128, 256, 512, 1024]
         tune_params["BLOCK_SIZE_Y"] = [1, 2, 4, 8, 16, 32]
         tune_params["BLOCK_SIZE_Z"] = [1, 2, 4]
         tune_params["TILING_FACTOR_X"] = [1, 2, 4, 8]
@@ -140,9 +140,9 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
         tune_params["LOOP_UNROLL_FACTOR_X"] = tune_params["TILING_FACTOR_X"]
         tune_params["LOOP_UNROLL_FACTOR_Y"] = tune_params["TILING_FACTOR_Y"]
         tune_params["LOOP_UNROLL_FACTOR_Z"] = tune_params["TILING_FACTOR_Z"]
-        tune_params["REWRITE_INTERP"] = [0, 1]
         tune_params["BLOCKS_PER_MP"] = [0, 1, 2, 3, 4]
         strategy = "bayes_opt"
+
 
     for key, values in extra_params.items():
         if not extra_tuning:
@@ -168,11 +168,11 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
     grid_div_y = ['BLOCK_SIZE_Y', 'TILING_FACTOR_Y']
     grid_div_z = ['BLOCK_SIZE_Z', 'TILING_FACTOR_Z']
 
-    problem_size = (grid.itot, grid.jtot, grid.ktot)
+    problem_size = (grid.itot, grid.jtot, grid.ktot if nlayers is None else nlayers)
     print(f'tuning {kernel_name} on {problem_size} for {float_name(grid.TF)}')
 
     # Calculate the number of iterations
-    total_points = grid.itot * grid.jtot * grid.ktot
+    total_points = problem_size[0] * problem_size[1] * problem_size[2]
     iterations = int(math.ceil(1e7 / total_points))
     iterations = min(max(5, iterations), 100)  # Clamp between 5 and 100
 
@@ -214,7 +214,30 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
             raise RuntimeError(f'error: argument {index} of {kernel_name} contains {count} non-finite values!')
 
         if np.any(output != args[index]):
+            average = np.average(output)
+            median = np.median(output[output != 0])
+            nzeros = np.sum(output == 0)
+            print(f'argument {index} of {kernel_name}: average: {average}, median: {median}, zeros={nzeros}')
             answers[index] = output
+
+    def verify(answers, results, atol=None):
+        is_valid = True
+
+        for index, (answer, result) in enumerate(zip(answers, results)):
+            if answer is None or np.allclose(answer, result, atol=atol):
+                continue
+
+            is_valid = False
+            invalid = ~np.isclose(answer, result, atol=atol)
+            count = np.sum(invalid)
+            fraction = np.average(invalid) * 100
+            print(f'argument {index} of {kernel_name} is invalid: {count} errors ({fraction}%)')
+
+            for i in np.argwhere(invalid)[:10]:
+                print(f' * index {i}: {answer[i]} != {result[i]}')
+
+
+        return is_valid
 
     # Tune it!
     return kernel_tuner.tune_kernel(
@@ -234,7 +257,8 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
         #quiet=True,
         strategy=strategy,
         strategy_options=strategy_options,
-        #answer=answers,
+        answer=answers,
+        verify=verify,
         atol=1e-12,
         #lang='cupy',  # TODO: cupy fails, why?
         lang=lang,
@@ -270,8 +294,9 @@ def store_results(filename, configs, env):
     return data
 
 
-def tune_and_store(grid, args, kernel_name, kernel_source, **kwargs):
-    experiment_key = f"{kernel_name}_{grid.itot}x{grid.jtot}x{grid.ktot}_{float_name(grid.TF)}_{device_name()}"
+def tune_and_store(grid, args, kernel_name, kernel_source, key=None, **kwargs):
+    if key is None: key = kernel_name
+    experiment_key = f"{key}_{grid.itot}x{grid.jtot}x{grid.ktot}_{float_name(grid.TF)}_{device_name()}"
     cache_file = f'cache/{experiment_key}.json'
     results_file = f'results/{experiment_key}.json'
 
