@@ -10,6 +10,7 @@ def tune_advec(axis, grid):
         fields.u.tend, fields.u.fld,
         fields.v.fld, fields.w.fld,
         fields.rhoref, fields.rhorefh,
+        1.0 / fields.rhoref, 1.0 / fields.rhorefh,
         grid.dzi, grid.dxi, grid.dyi,
         grid.icells, grid.ijcells,
         grid.istart, grid.jstart, grid.kstart,
@@ -18,7 +19,7 @@ def tune_advec(axis, grid):
 
     kernel_name = f"advec_{axis}_wrapper"
     kernel_source = "advec_2i5.cu"
-    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1])
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0], USE_RECIPROCAL=[0, 1])
 
     return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
 
@@ -42,6 +43,7 @@ def tune_advec_uvw(grid):
         fields.u.tend, fields.v.tend, fields.w.tend,
         fields.u.fld, fields.v.fld, fields.w.fld,
         fields.rhoref, fields.rhorefh,
+        1.0 / fields.rhoref, 1.0 / fields.rhorefh,
         grid.dzi, grid.dxi, grid.dyi,
         grid.icells, grid.ijcells,
         grid.istart, grid.jstart, grid.kstart,
@@ -50,7 +52,7 @@ def tune_advec_uvw(grid):
 
     kernel_name = f"advec_uvw_wrapper"
     kernel_source = "advec_2i5.cu"
-    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1], FUSE_BLOCKS=[0, 1])
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0], FUSE_BLOCKS=[0, 1], USE_RECIPROCAL=[0, 1])
 
     return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
 
@@ -63,6 +65,7 @@ def tune_advec_uvw_interior(grid):
         fields.u.tend, fields.v.tend, fields.w.tend,
         fields.u.fld, fields.v.fld, fields.w.fld,
         fields.rhoref, fields.rhorefh,
+        1.0 / fields.rhoref, 1.0 / fields.rhorefh,
         grid.dzi, grid.dxi, grid.dyi,
         grid.icells, grid.ijcells,
         grid.istart, grid.jstart, grid.kstart + border,
@@ -71,7 +74,7 @@ def tune_advec_uvw_interior(grid):
 
     kernel_name = "advec_uvw_interior_wrapper"
     kernel_source = "advec_2i5.cu"
-    params = dict(REWRITE_FINITE_DIFFERENCE=[0, 1], FUSE_BLOCKS=[0, 1])
+    params = dict(REWRITE_FINITE_DIFFERENCE=[0], FUSE_BLOCKS=[0, 1], USE_RECIPROCAL=[0, 1])
     nlayers = grid.ktot - 2 * border
 
     return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, nlayers=nlayers)

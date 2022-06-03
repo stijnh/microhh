@@ -117,9 +117,13 @@ struct TilingStrategy
     static constexpr unsigned int block_size_x = block_size_x_;
     static constexpr unsigned int block_size_y = block_size_y_;
     static constexpr unsigned int block_size_z = block_size_z_;
+    static constexpr unsigned int block_size[3] = {block_size_x, block_size_y, block_size_z};
+
     static constexpr unsigned int tile_factor_x = tile_factor_x_;
     static constexpr unsigned int tile_factor_y = tile_factor_y_;
     static constexpr unsigned int tile_factor_z = tile_factor_z_;
+    static constexpr unsigned int tile_factor[3] = {tile_factor_x, tile_factor_y, tile_factor_z};
+
     static constexpr unsigned int unroll_factor_x = unroll_factor_x_;
     static constexpr unsigned int unroll_factor_y = unroll_factor_y_;
     static constexpr unsigned int unroll_factor_z = unroll_factor_z_;
@@ -128,6 +132,7 @@ struct TilingStrategy
     static constexpr unsigned int tile_size_x = tile_factor_x * block_size_x;
     static constexpr unsigned int tile_size_y = tile_factor_y * block_size_y;
     static constexpr unsigned int tile_size_z = tile_factor_z * block_size_z;
+    static constexpr unsigned int tile_size[3] = {tile_size_x, tile_size_y, tile_size_z};
 
     static constexpr unsigned int block_size_xyz = block_size_x * block_size_y * block_size_z;
     static constexpr unsigned int tile_size_xyz = tile_size_x * tile_size_y * tile_size_z;

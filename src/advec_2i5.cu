@@ -38,7 +38,7 @@ namespace
     using namespace Finite_difference::O6;
 
 
-    template<typename TF>
+    template<typename TF, bool UseReciprocal = false>
     struct advec_u_body
     {
         template <typename Level>
@@ -48,7 +48,8 @@ namespace
                 const TF* __restrict__ v,  const TF* __restrict__ w,
                 const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
                 const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-                const int jj, int kk)
+                const int jj, int kk,
+                const TF* __restrict__ rhoref_rcp=nullptr)
         {
             const int ii1 = 1;
             const int ii2 = 2;
@@ -64,18 +65,18 @@ namespace
 
             ut[ijk] +=
                 // u*du/dx
-                - ( interp2(u[ijk        ], u[ijk+ii1]) * interp6_ws(u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2], u[ijk+ii3])
-                  - interp2(u[ijk-ii1    ], u[ijk    ]) * interp6_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2]) ) * dxi
+                (- ( interp2(u[ijk        ], u[ijk+ii1]) * interp6_ws(u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2], u[ijk+ii3])
+                  - interp2(u[ijk-ii1    ], u[ijk    ]) * interp6_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2]) )
 
                 + ( fabs(interp2(u[ijk        ], u[ijk+ii1])) * interp5_ws(u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2], u[ijk+ii3])
-                  - fabs(interp2(u[ijk-ii1    ], u[ijk    ])) * interp5_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2]) ) * dxi
+                  - fabs(interp2(u[ijk-ii1    ], u[ijk    ])) * interp5_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk    ], u[ijk+ii1], u[ijk+ii2]) )) * dxi
 
                 // v*du/dy
-                - ( interp2(v[ijk-ii1+jj1], v[ijk+jj1]) * interp6_ws(u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2], u[ijk+jj3])
-                  - interp2(v[ijk-ii1    ], v[ijk    ]) * interp6_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2]) ) * dyi
+                + (- ( interp2(v[ijk-ii1+jj1], v[ijk+jj1]) * interp6_ws(u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2], u[ijk+jj3])
+                  - interp2(v[ijk-ii1    ], v[ijk    ]) * interp6_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2]) )
 
                 + ( fabs(interp2(v[ijk-ii1+jj1], v[ijk+jj1])) * interp5_ws(u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2], u[ijk+jj3])
-                  - fabs(interp2(v[ijk-ii1    ], v[ijk    ])) * interp5_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2]) ) * dyi;
+                  - fabs(interp2(v[ijk-ii1    ], v[ijk    ])) * interp5_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk    ], u[ijk+jj1], u[ijk+jj2]) )) * dyi;
 
             if (level.distance_to_start() == 0)
             {
@@ -129,13 +130,18 @@ namespace
             }
             else
             {
-                ut[ijk] +=
-                    // w*du/dz
-                    (- ( rhorefh[k+1] * interp2(w[ijk-ii1+kk1], w[ijk+kk1]) * interp6_ws(u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2], u[ijk+kk3])
-                      + (- rhorefh[k  ]) * interp2(w[ijk-ii1    ], w[ijk    ]) * interp6_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2]) )
+                // w*du/dz
+                TF factor = (- ( rhorefh[k+1] * interp2(w[ijk-ii1+kk1], w[ijk+kk1]) * interp6_ws(u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2], u[ijk+kk3])
+                                 + (- rhorefh[k  ]) * interp2(w[ijk-ii1    ], w[ijk    ]) * interp6_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2]) )
 
-                    + ( rhorefh[k+1] * fabs(interp2(w[ijk-ii1+kk1], w[ijk+kk1])) * interp5_ws(u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2], u[ijk+kk3])
-                      + (- rhorefh[k  ]) * fabs(interp2(w[ijk-ii1    ], w[ijk    ])) * interp5_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2]) )) * dzi[k] / rhoref[k];
+                             + ( rhorefh[k+1] * fabs(interp2(w[ijk-ii1+kk1], w[ijk+kk1])) * interp5_ws(u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2], u[ijk+kk3])
+                                 + (- rhorefh[k  ]) * fabs(interp2(w[ijk-ii1    ], w[ijk    ])) * interp5_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk    ], u[ijk+kk1], u[ijk+kk2]) ));
+
+                if (UseReciprocal) {
+                    ut[ijk] += factor * dzi[k] * rhoref_rcp[k];
+                } else {
+                    ut[ijk] += factor * dzi[k] / rhoref[k];
+                }
             }
         }
     };
@@ -161,7 +167,7 @@ namespace
                 jj, kk);
     }
 
-    template<typename TF>
+    template<typename TF, bool UseReciprocal = false>
     struct advec_v_body
     {
             template <typename Level>
@@ -171,7 +177,8 @@ namespace
                        const TF* __restrict__ v,  const TF* __restrict__ w,
                        const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
                        const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-                       const int jj, int kk)
+                       const int jj, int kk,
+                       const TF* __restrict__ rhoref_rcp=nullptr)
         {
             const int ii1 = 1;
             const int ii2 = 2;
@@ -251,12 +258,18 @@ namespace
             }
             else
             {
-                vt[ijk] +=
-                     (- ( rhorefh[k+1] * interp2(w[ijk-jj1+kk1], w[ijk+kk1]) * interp6_ws(v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2], v[ijk+kk3])
-                      - rhorefh[k  ] * interp2(w[ijk-jj1    ], w[ijk    ]) * interp6_ws(v[ijk-kk3], v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2]) )
+                TF factor =
+                        (- ( rhorefh[k+1] * interp2(w[ijk-jj1+kk1], w[ijk+kk1]) * interp6_ws(v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2], v[ijk+kk3])
+                             - rhorefh[k  ] * interp2(w[ijk-jj1    ], w[ijk    ]) * interp6_ws(v[ijk-kk3], v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2]) )
 
-                    + ( rhorefh[k+1] * fabs(interp2(w[ijk-jj1+kk1], w[ijk+kk1])) * interp5_ws(v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2], v[ijk+kk3])
-                      - rhorefh[k  ] * fabs(interp2(w[ijk-jj1    ], w[ijk    ])) * interp5_ws(v[ijk-kk3], v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2]) )) / rhoref[k] * dzi[k];
+                         + ( rhorefh[k+1] * fabs(interp2(w[ijk-jj1+kk1], w[ijk+kk1])) * interp5_ws(v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2], v[ijk+kk3])
+                             - rhorefh[k  ] * fabs(interp2(w[ijk-jj1    ], w[ijk    ])) * interp5_ws(v[ijk-kk3], v[ijk-kk2], v[ijk-kk1], v[ijk    ], v[ijk+kk1], v[ijk+kk2]) ));
+
+                if (UseReciprocal) {
+                    vt[ijk] += factor / rhoref[k] * dzi[k];
+                } else {
+                    vt[ijk] += factor * rhoref_rcp[k] * dzi[k];
+                }
             }
         }
     };
@@ -282,7 +295,7 @@ namespace
                 jj, kk);
     }
 
-   template<typename TF>
+   template<typename TF, bool UseReciprocal = false>
    struct advec_w_body
    {
        template <typename Level>
@@ -292,7 +305,8 @@ namespace
                        const TF* __restrict__ v,  const TF* __restrict__ w,
                        const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
                        const TF* __restrict__ dzhi, const TF dxi, const TF dyi,
-                       const int jj, int kk)
+                       const int jj, int kk,
+                       const TF* __restrict__ rhorefh_rcp = nullptr)
        {
             const int ii1 = 1;
             const int ii2 = 2;
@@ -361,13 +375,19 @@ namespace
             }
             else if ( (level.distance_to_start() >= 2) && (level.distance_to_end() >= 2) )
             {
-                wt[ijk] +=
+                TF factor =
                     // w*dw/dz
                     (- ( rhoref[k  ] * interp2(w[ijk        ], w[ijk+kk1]) * interp6_ws(w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1], w[ijk+kk2], w[ijk+kk3])
                       - rhoref[k-1] * interp2(w[ijk-kk1    ], w[ijk    ]) * interp6_ws(w[ijk-kk3], w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1], w[ijk+kk2]) )
 
                     + ( rhoref[k  ] * fabs(interp2(w[ijk        ], w[ijk+kk1])) * interp5_ws(w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1], w[ijk+kk2], w[ijk+kk3])
-                      - rhoref[k-1] * fabs(interp2(w[ijk-kk1    ], w[ijk    ])) * interp5_ws(w[ijk-kk3], w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1], w[ijk+kk2]) )) / rhorefh[k] * dzhi[k];
+                      - rhoref[k-1] * fabs(interp2(w[ijk-kk1    ], w[ijk    ])) * interp5_ws(w[ijk-kk3], w[ijk-kk2], w[ijk-kk1], w[ijk    ], w[ijk+kk1], w[ijk+kk2]) ));
+
+                if (UseReciprocal) {
+                    wt[ijk] += factor * rhorefh_rcp[k] * dzhi[k];
+                } else {
+                    wt[ijk] += factor / rhorefh[k] * dzhi[k];
+                }
             }
         }
    };
