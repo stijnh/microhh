@@ -111,12 +111,12 @@ def float_name(TF):
     else:
         raise "unknown type: {}".format(TF)
 
-def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning, extra_params=dict(), nlayers=None):
+def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning, extra_params=dict(), nlayers=None, cta_padding=0):
     # Tune parameters
     tune_params = OrderedDict()
     tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256]
     tune_params["BLOCK_SIZE_Y"] = [1, 2, 4, 8, 16, 32]
-    tune_params["BLOCK_SIZE_Z"] = [1]
+    tune_params["BLOCK_SIZE_Z"] = [1, 2]
     tune_params["STATIC_STRIDES"] = [0]
     tune_params["TILING_FACTOR_X"] = [1]
     tune_params["TILING_FACTOR_Y"] = [1]
@@ -131,24 +131,22 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
     strategy_options = dict()
 
     if extra_tuning:
-        tune_params["BLOCK_SIZE_X"] = [32] #[1, 2, 4, 8, 16, 32, 128, 256, 512, 1024]
+        tune_params["BLOCK_SIZE_X"] = [1, 2, 4, 8, 16, 32, 128, 256, 512, 1024]
         tune_params["BLOCK_SIZE_Y"] = [1, 2, 4, 8, 16, 32]
         tune_params["BLOCK_SIZE_Z"] = [1, 2, 4]
         tune_params["TILING_FACTOR_X"] = [1, 2, 4, 8]
         tune_params["TILING_FACTOR_Y"] = [1, 2, 4]
         tune_params["TILING_FACTOR_Z"] = [1, 2, 4]
-        tune_params["LOOP_UNROLL_FACTOR_X"] = tune_params["TILING_FACTOR_X"]
-        tune_params["LOOP_UNROLL_FACTOR_Y"] = tune_params["TILING_FACTOR_Y"]
-        tune_params["LOOP_UNROLL_FACTOR_Z"] = tune_params["TILING_FACTOR_Z"]
+        tune_params["LOOP_UNROLL_FACTOR_X"] = [0, 1] #tune_params["TILING_FACTOR_X"]
+        tune_params["LOOP_UNROLL_FACTOR_Y"] = [0, 1] #tune_params["TILING_FACTOR_Y"]
+        tune_params["LOOP_UNROLL_FACTOR_Z"] = [0, 1] #tune_params["TILING_FACTOR_Z"]
         tune_params["BLOCKS_PER_MP"] = [0, 1, 2, 3, 4]
         strategy = "bayes_opt"
 
 
     for key, values in extra_params.items():
-        if not extra_tuning:
-            values = [values[0]]
-
-        tune_params[key] = values
+        # Only add if extra_tuning is enabled, otherwise just add a dummy parameter with a single value.
+        tune_params[key] = values if extra_tuning else [values[0]]
 
     max_threads_per_sm = device_attribute("MAX_THREADS_PER_MULTIPROCESSOR")
     max_threads_per_block = device_attribute("MAX_THREADS_PER_BLOCK")
@@ -156,17 +154,20 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
     restrictions = [
         f"BLOCK_SIZE_X * BLOCK_SIZE_Y * BLOCK_SIZE_Z * BLOCKS_PER_MP <= {max_threads_per_sm}",
         f"32 <= BLOCK_SIZE_X * BLOCK_SIZE_Y * BLOCK_SIZE_Z <= {max_threads_per_block}",
-        "TILING_FACTOR_X % LOOP_UNROLL_FACTOR_X == 0",
-        "TILING_FACTOR_Y % LOOP_UNROLL_FACTOR_Y == 0",
-        "TILING_FACTOR_Z % LOOP_UNROLL_FACTOR_Z == 0",
+        "LOOP_UNROLL_FACTOR_X == 0 or TILING_FACTOR_X % LOOP_UNROLL_FACTOR_X == 0",
+        "LOOP_UNROLL_FACTOR_Y == 0 or TILING_FACTOR_Y % LOOP_UNROLL_FACTOR_Y == 0",
+        "LOOP_UNROLL_FACTOR_Z == 0 or TILING_FACTOR_Z % LOOP_UNROLL_FACTOR_Z == 0",
+        f"BLOCK_SIZE_X * TILING_FACTOR_X > {cta_padding}",
+        f"BLOCK_SIZE_Y * TILING_FACTOR_Y > {cta_padding}",
+        f"BLOCK_SIZE_Z * TILING_FACTOR_Z > {cta_padding}",
     ]
 
     # general options
     lang = 'CUDA'
     block_size_names = ['BLOCK_SIZE_' + c for c in 'XYZ']
-    grid_div_x = ['BLOCK_SIZE_X', 'TILING_FACTOR_X']
-    grid_div_y = ['BLOCK_SIZE_Y', 'TILING_FACTOR_Y']
-    grid_div_z = ['BLOCK_SIZE_Z', 'TILING_FACTOR_Z']
+    grid_div_x = [f'max(BLOCK_SIZE_X * TILING_FACTOR_X - {cta_padding}, 1)']
+    grid_div_y = [f'max(BLOCK_SIZE_Y * TILING_FACTOR_Y - {cta_padding}, 1)']
+    grid_div_z = [f'max(BLOCK_SIZE_Z * TILING_FACTOR_Z - {cta_padding}, 1)']
 
     problem_size = (grid.itot, grid.jtot, grid.ktot if nlayers is None else nlayers)
     print(f'tuning {kernel_name} on {problem_size} for {float_name(grid.TF)}')
@@ -186,10 +187,13 @@ def tune_kernel(grid, args, kernel_name, kernel_source, cache_file, extra_tuning
         "--define-macro", "USECUDA=1",
         "--extended-lambda",
         "-std=c++17",
+        '-Xptxas="-v"',
     ]
 
     # True answer from the kernel without optimizations
     params = OrderedDict((key, values[0]) for key, values in tune_params.items())
+    params['BLOCK_SIZE_X'] = params['BLOCK_SIZE_Y'] = params['BLOCK_SIZE_Z'] = 1 + cta_padding
+
     unopt_flags = ['-O0', '-Xcicc', '-O0', '-Xptxas', '-O0']
     outputs = kernel_tuner.run_kernel(
         kernel_name,

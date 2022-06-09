@@ -1,7 +1,34 @@
-from helpers import Grid, Fields, tune_and_store
+from helpers import Grid, Fields, tune_and_store, tune_kernel, float_name
 import numpy as np
 import sys
 from pprint import pprint
+
+def tune_advec_u_smem(grid):
+    fields = Fields.from_grid(grid, ["u", "v", "w"])
+    border = np.int32(3)
+    args = [
+        fields.u.tend, fields.u.fld,
+        fields.v.fld, fields.w.fld,
+        fields.rhoref, fields.rhorefh,
+        # 1.0 / fields.rhoref, 1.0 / fields.rhorefh,
+        grid.dzi, grid.dxi, grid.dyi,
+        grid.icells, grid.ijcells,
+        grid.istart, grid.jstart, grid.kstart + border,
+        grid.iend, grid.jend, grid.kend - border
+    ]
+
+
+    kernel_name = "advec_u_g"
+    kernel_source = "advec_2i5_smem.cu"
+    nlayers = grid.ktot - 2 * border
+
+    params = dict(
+        USE_RECIPROCAL=[0],
+        USE_SMEM_X=[0, 1],
+        USE_SMEM_Y=[0, 1],
+        USE_SMEM_Z=[0, 1],
+    )
+    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, cta_padding=1, nlayers=nlayers)
 
 def tune_advec(axis, grid):
     fields = Fields.from_grid(grid, ["u", "v", "w"])
@@ -201,6 +228,7 @@ def main(args):
         advec_s_lim=tune_advec_s_lim,
         calc_cfl=tune_calc_cfl,
         diff_uvw=tune_diff_uvw,
+        advec_u_smem=tune_advec_u_smem,
     )
 
     if len(args) < 2:

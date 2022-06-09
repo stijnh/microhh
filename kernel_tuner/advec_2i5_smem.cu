@@ -18,344 +18,333 @@ using TuneTiling = TilingStrategy<
         BLOCKS_PER_MP
 >;
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_u_wrapper(TF* __restrict__ ut, const TF* __restrict__ u,
-               const TF* __restrict__ v,  const TF* __restrict__ w,
-               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-               const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
-{
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_u_body<TF, USE_RECIPROCAL>(),
-            ut, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-}
+template <int axis, typename F, typename Strategy>
+struct SmemTilingStrategy {
+    static_assert(axis >= 0 && axis <= 2, "invalid axis, must be 0, 1, 2");
+    static_assert(Strategy::tile_size_x > 1, "tile_size_x must be greater than one");
+    static_assert(Strategy::tile_size_y > 1, "tile_size_y must be greater than one");
+    static_assert(Strategy::tile_size_z > 1, "tile_size_z must be greater than one");
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_v_wrapper(TF* __restrict__ vt, const TF* __restrict__ u,
-               const TF* __restrict__ v,  const TF* __restrict__ w,
-               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-                     const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
-{
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_v_body<TF, USE_RECIPROCAL>(),
-            vt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-}
+    static constexpr int smem_ii = 1;
+    static constexpr int smem_jj = Strategy::tile_size_x;// - int(axis != 0);
+    static constexpr int smem_kk = smem_jj * (Strategy::tile_size_y) - int(axis != 1);
+    static constexpr int smem_size = smem_kk * (Strategy::tile_size_z) - int(axis != 2);
+    static constexpr int smem_strides[3] = {smem_ii, smem_jj, smem_kk};
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_w_wrapper(TF* __restrict__ wt, const TF* __restrict__ u,
-               const TF* __restrict__ v,  const TF* __restrict__ w,
-               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-                     const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
-{
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_w_body<TF, USE_RECIPROCAL>(),
-            wt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhorefh_rcp);
-}
+    CUDA_HOST_DEVICE
+    SmemTilingStrategy(F functor = {}): functor_(functor) {}
 
-template<typename TF>
-struct advec_uvw_body
-{
-    template <typename Level>
-    __forceinline__ __device__ void operator()(
-            const int i, const int j, const int k, const Level level,
-            TF* __restrict__ ut, TF* __restrict__ vt, TF* __restrict__ wt,
-            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-            const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
-    {
-        advec_u_body<TF, USE_RECIPROCAL>()(i, j, k, level, ut, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk, rhoref_rcp);
-        advec_v_body<TF, USE_RECIPROCAL>()(i, j, k, level, vt, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk, rhoref_rcp);
-        advec_w_body<TF, USE_RECIPROCAL>()(i, j, k, level, wt, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk, rhorefh_rcp);
-    }
-};
+    template <typename TF, typename ...Args>
+    CUDA_DEVICE void initialize_smem(
+            TF* smem,
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            Args... args
+    ) {
+        const int thread_idx_x = Strategy::block_size_x == 1 ? 0 : threadIdx.x;
+        const int thread_idx_y = Strategy::block_size_y == 1 ? 0 : threadIdx.y;
+        const int thread_idx_z = Strategy::block_size_z == 1 ? 0 : threadIdx.z;
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_uvw_wrapper(
-               TF* __restrict__ ut, TF* __restrict__ vt, TF* __restrict__ wt,
-               const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-               const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
-{
-#if defined(FUSE_BLOCKS) and FUSE_BLOCKS
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_uvw_body<TF>(),
-            ut, vt, wt,
-            u, v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk);
-#else
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_u_body<TF, USE_RECIPROCAL>(),
-            ut, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_v_body<TF, USE_RECIPROCAL>(),
-            vt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_w_body<TF, USE_RECIPROCAL>(),
-            wt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhorefh_rcp);
-#endif
-}
-
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_uvw_interior_wrapper(
-               TF* __restrict__ ut, TF* __restrict__ vt, TF* __restrict__ wt,
-               const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-               const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
-               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
-{
-#if defined(FUSE_BLOCKS) and FUSE_BLOCKS
-    TuneTiling::process_cta_middle(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_uvw_body<TF, USE_RECIPROCAL>(),
-            ut, vt, wt,
-            u, v, w,
-            rhoref, rhorefh,
-            rhoref_rcp, rhorefh_rcp
-            dzi, dxi, dyi,
-            jj, kk);
-#else
-    TuneTiling::process_cta_middle(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_u_body<TF, USE_RECIPROCAL>(),
-            ut, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-
-    TuneTiling::process_cta_middle(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_v_body<TF, USE_RECIPROCAL>(),
-            vt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhoref_rcp);
-
-    TuneTiling::process_cta_middle(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_w_body<TF, USE_RECIPROCAL>(),
-            wt, u,
-            v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk,
-            rhorefh_rcp);
-#endif
-}
-
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_s_wrapper(TF* __restrict__ st, const TF* __restrict__ s,
-                     const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-                     const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-                     const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-                     const int jj, int kk,
-                     const int istart, const int jstart, const int kstart,
-                     const int iend,   const int jend,   const int kend)
-{
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_s_body<TF>(),
-            st, s,
-            u, v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk);
-}
+#pragma unroll(Strategy::unroll_factor_z)
+        for (int dk = 0; dk < Strategy::tile_factor_z; dk++) {
+            const int koffset = dk * Strategy::block_size_z + thread_idx_z;
+            const int k = kstart + blockIdx.z * (Strategy::tile_size_z - 1) + koffset;
 
 
-template<typename TF, size_t N>
-struct advec_s_multi_body
-{
-    template <typename Level>
-    __forceinline__ __device__ void operator()(
-            const int i, const int j, const int k, const Level level,
-            TF* __restrict__ * __restrict__ st, const TF* __restrict__ * __restrict__ s,
-            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
-    {
-#pragma unroll N
-        for (size_t index = 0; index < N; ++index)
-        {
-            advec_s_body<TF>()(
-                    i, j, k, level,
-                    st[index], s[index],
-                    u, v, w,
-                    rhoref, rhorefh,
-                    dzi, dxi, dyi,
-                    jj, kk
-            );
+#pragma unroll(Strategy::unroll_factor_y)
+            for (int dj = 0; dj < Strategy::tile_factor_y; dj++) {
+                const int joffset = dj * Strategy::block_size_y + thread_idx_y;
+                const int j = jstart + blockIdx.y * (Strategy::tile_size_y - 1) + joffset;
+
+
+#pragma unroll(Strategy::unroll_factor_x)
+                for (int di = 0; di < Strategy::tile_factor_x; di++) {
+                    const int ioffset = di * Strategy::block_size_x + thread_idx_x;
+                    const int i = istart + blockIdx.x * (Strategy::tile_size_x - 1) + ioffset;
+
+                    bool valid = true;
+                    if (axis == 2) {
+                        if (k > kend) valid = false;
+                    } else {
+                        if (k >= kend || koffset >= Strategy::tile_size_z - 1) valid = false;
+                    }
+
+                    if (axis == 1) {
+                        if (j > jend) valid = false;
+                    } else {
+                        if (j >= jend || joffset >= Strategy::tile_size_y - 1) valid = false;
+                    }
+
+                    if (axis == 0) {
+                        if (i > iend) valid = false;
+                    } else {
+                        if (i >= iend || ioffset >= Strategy::tile_size_x - 1) valid = false;
+                    }
+
+                    const int index = ioffset * smem_ii + joffset * smem_jj + koffset * smem_kk;
+                    if (valid) smem[index] = functor_.init(i, j, k, args...);
+                }
+            }
         }
     }
+
+    template <bool UseSmem, typename TF, typename ...Args>
+    CUDA_DEVICE void execute_internal(
+            const TF* smem,
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            Args... args
+    ) {
+        const int thread_idx_x = Strategy::block_size_x == 1 ? 0 : threadIdx.x;
+        const int thread_idx_y = Strategy::block_size_y == 1 ? 0 : threadIdx.y;
+        const int thread_idx_z = Strategy::block_size_z == 1 ? 0 : threadIdx.z;
+
+#pragma unroll(Strategy::unroll_factor_z)
+        for (int dk = 0; dk < Strategy::tile_factor_z; dk++)
+        {
+            const int koffset = dk * Strategy::block_size_z + thread_idx_z;
+            const int k = kstart + blockIdx.z * (Strategy::tile_size_z - 1)  + koffset;
+
+#pragma unroll(Strategy::unroll_factor_y)
+            for (int dj = 0; dj < Strategy::tile_factor_y; dj++)
+            {
+                const int joffset = dj * Strategy::block_size_y + thread_idx_y;
+                const int j = jstart + blockIdx.y * (Strategy::tile_size_y - 1) + joffset;
+
+#pragma unroll(Strategy::unroll_factor_x)
+                for (int di = 0; di < Strategy::tile_factor_x; di++)
+                {
+                    const int ioffset = di * Strategy::block_size_x + thread_idx_x;
+                    const int i = istart + blockIdx.x * (Strategy::tile_size_x - 1) + ioffset;
+
+                    if (i >= iend || ioffset >= Strategy::tile_size_x - 1) continue;
+                    if (j >= jend || joffset >= Strategy::tile_size_y - 1) continue;
+                    if (k >= kend || koffset >= Strategy::tile_size_z - 1) continue;
+
+                    TF left, right;
+
+                    if (UseSmem) {
+                        const int lindex = ioffset * smem_ii + joffset * smem_jj + koffset * smem_kk;
+                        const int rindex = lindex + smem_strides[axis];
+
+                        left = smem[lindex];
+                        right = smem[rindex];
+                    } else {
+                        left = functor_.init(i, j, k, args...);
+                        right = functor_.init(i +  (int)(axis == 0), j + (int)(axis == 1), k + (int)(axis == 2), args...);
+                    }
+
+                    functor_.execute(
+                            left, right,
+                            i, j, k,
+                            args...
+                    );
+                }
+            }
+        }
+    }
+
+    template <typename ...Args>
+    CUDA_DEVICE void execute_smem(Args... args) {
+        execute_internal<true>(args...);
+    }
+
+    template <typename ...Args>
+    CUDA_DEVICE void execute_nosmem(Args... args) {
+        execute_internal<false>((TF*) nullptr, args...);
+    }
+
+    template <typename TF, typename ...Args>
+    CUDA_DEVICE void execute(
+            TF* smem,
+            const int istart, const int jstart, const int kstart,
+            const int iend, const int jend, const int kend,
+            Args... args
+    ) {
+        initialize_smem(smem, istart, jstart, kstart, iend, jend, kend, args...);
+        __syncthreads();
+        execute_smem(smem, istart, jstart, kstart, iend, jend, kend, args...);
+    }
+
+private:
+    F functor_;
 };
 
-#ifndef ADVEC_S_MULTI_SIZE
-#define ADVEC_S_MULTI_SIZE 1
-#endif
-template <typename T, size_t N>
-struct array { T elements[N]; };
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_s_multi_wrapper(
-                     array<TF* __restrict__, ADVEC_S_MULTI_SIZE> st,
-                     array<const TF* __restrict__, ADVEC_S_MULTI_SIZE> s,
-                     const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-                     const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-                     const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-                     const int jj, int kk,
-                     const int istart, const int jstart, const int kstart,
-                     const int iend,   const int jend,   const int kend)
-{
-#if defined(FUSE_BLOCKS) and FUSE_BLOCKS
-    TuneTiling::process_cta(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            advec_s_multi_body<TF, ADVEC_S_MULTI_SIZE>(),
-            st.elements, s.elements,
-            u, v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk);
-#else
-    static constexpr size_t N = ADVEC_S_MULTI_SIZE;
-    #pragma unroll N
-    for (size_t index = 0; index < N; ++index)
+template <typename TF>
+struct advec_u_i_interp {
+    __forceinline__ __device__
+    TF init(
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk)
     {
-        TuneTiling::process_cta(
-                istart, jstart, kstart,
-                iend, jend, kend,
-                advec_s_body<TF>(),
-                st.elements[index], s.elements[index],
-                u, v, w,
-                rhoref, rhorefh,
-                dzi, dxi, dyi,
-                jj, kk);
+        const int ii1 = 1;
+        const int ii2 = 2;
+        const int ii3 = 3;
+        const int ijk = i + j*jj + k*kk;
+
+        return fabs(interp2(u[ijk-ii1], u[ijk])) * interp5_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk], u[ijk+ii1], u[ijk+ii2])
+               - interp2(u[ijk-ii1], u[ijk]) * interp6_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk], u[ijk+ii1], u[ijk+ii2]);
     }
+
+    __forceinline__ __device__
+    void execute(
+            TF left, TF right,
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk)
+    {
+        const int ijk = i + j*jj + k*kk;
+        ut[ijk] += (right - left) * dxi;
+    }
+};
+
+template <typename TF>
+struct advec_u_j_interp {
+    __forceinline__ __device__
+    TF init(
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk)
+    {
+        const int ii1 = 1;
+        const int jj1 = 1*jj;
+        const int jj2 = 2*jj;
+        const int jj3 = 3*jj;
+        const int ijk = i + j*jj + k*kk;
+
+        return fabs(interp2(v[ijk-ii1], v[ijk])) * interp5_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk], u[ijk+jj1], u[ijk+jj2])
+               - interp2(v[ijk-ii1], v[ijk]) * interp6_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk], u[ijk+jj1], u[ijk+jj2]);
+    }
+
+    __forceinline__ __device__
+    void execute(
+            TF left, TF right,
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk
+    )
+    {
+        const int ijk = i + j*jj + k*kk;
+        ut[ijk] += (right - left) * dyi;
+    }
+};
+
+template <typename TF>
+struct advec_u_k_interp {
+    __forceinline__ __device__
+    TF init(
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk)
+    {
+        const int ii1 = 1;
+        const int kk1 = 1*kk;
+        const int kk2 = 2*kk;
+        const int kk3 = 3*kk;
+        const int ijk = i + j*jj + k*kk;
+
+        return -rhorefh[k] * interp2(w[ijk-ii1], w[ijk]) * interp6_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk], u[ijk+kk1], u[ijk+kk2])
+            + rhorefh[k] * fabs(interp2(w[ijk-ii1], w[ijk])) * interp5_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk], u[ijk+kk1], u[ijk+kk2]);
+    }
+
+    __forceinline__ __device__
+    void execute(
+            TF left, TF right,
+            const int i, const int j, const int k,
+            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
+            const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+            const int jj, int kk
+    )
+    {
+        const int ijk = i + j*jj + k*kk;
+        ut[ijk] += (right - left) * dzi[k] / rhoref[k];
+    }
+};
+
+template <typename T>
+__host__ __device__ constexpr T max3(T a, T b, T c) {
+    if (a > b && a > c) {
+        return a;
+    } else if (b > c) {
+        return b;
+    } else {
+        return c;
+    }
+}
+
+
+extern "C"
+ELEMENTWISE_KERNEL(TuneTiling)
+void advec_u_g(TF* __restrict__ ut, const TF* __restrict__ u,
+               const TF* __restrict__ v,  const TF* __restrict__ w,
+               const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
+               const TF* __restrict__ dzi, const TF dxi, const TF dyi,
+               const int jj, int kk,
+               const int istart, const int jstart, const int kstart,
+               const int iend,   const int jend,   const int kend)
+{
+    using Tiling = TuneTiling;
+    using AdvecUI = SmemTilingStrategy<0, advec_u_i_interp<TF>, Tiling>;
+    using AdvecUJ = SmemTilingStrategy<1, advec_u_j_interp<TF>, Tiling>;
+    using AdvecUK = SmemTilingStrategy<2, advec_u_k_interp<TF>, Tiling>;
+
+#if USE_SMEM_X || USE_SMEM_Y || USE_SMEM_Z
+    static constexpr size_t smem_size = max3(
+            AdvecUI::smem_size * int(USE_SMEM_X != 0),
+            AdvecUJ::smem_size * int(USE_SMEM_Y != 0),
+            AdvecUK::smem_size * int(USE_SMEM_Z != 0)
+    );
+    __shared__ TF smem[smem_size];
 #endif
-}
 
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void advec_s_lim_wrapper(
-        TF* __restrict__ st, const TF* __restrict__ s,
-        const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
-        const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-        const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-        const int jj, int kk,
-        const int istart, const int jstart, const int kstart,
-        const int iend, const int jend, const int kend)
-{
-    TuneTiling::process_cta(
+#if USE_SMEM_X
+    AdvecUI{}.execute(smem,
             istart, jstart, kstart,
             iend, jend, kend,
-            advec_s_lim_body<TF>(),
-            st, s,
-            u, v, w,
-            rhoref, rhorefh,
-            dzi, dxi, dyi,
-            jj, kk);
-}
-
-extern "C"
-ELEMENTWISE_KERNEL(TuneTiling)
-void calc_cfl_wrapper(
-                TF* const __restrict__ tmp1,
-                const TF* __restrict__ u, const TF* __restrict__ v, const TF* __restrict__ w,
-                const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-                const int jj, const int kk,
-                const int istart, const int jstart, const int kstart,
-                const int iend, const int jend, const int kend)
-{
-    TuneTiling::process_cta(
+            ut, u, dzi, dxi, dyi, jj, kk);
+    __syncthreads();
+#else
+    AdvecUI{}.execute_nosmem(
             istart, jstart, kstart,
             iend, jend, kend,
-            calc_cfl_body<TF>(),
-            tmp1,
-            u, v, w,
-            dzi, dxi, dyi,
-            jj, kk);
+            ut, u, dzi, dxi, dyi, jj, kk);
+#endif
+
+#if USE_SMEM_Y
+    AdvecUJ{}.execute(smem,
+            istart, jstart, kstart,
+            iend, jend, kend,
+            ut, u, v, w, dzi, dxi, dyi, jj, kk);
+    __syncthreads();
+#else
+    AdvecUJ{}.execute_nosmem(
+            istart, jstart, kstart,
+            iend, jend, kend,
+            ut, u, v, w, dzi, dxi, dyi, jj, kk);
+#endif
+
+#if USE_SMEM_Z
+    AdvecUK{}.execute(smem,
+            istart, jstart, kstart,
+            iend, jend, kend,
+            ut, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk);
+#else
+    AdvecUK{}.execute_nosmem(
+            istart, jstart, kstart,
+            iend, jend, kend,
+            ut, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk);
+#endif
 }

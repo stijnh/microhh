@@ -18,6 +18,20 @@ using TuneTiling = TilingStrategy<
         BLOCKS_PER_MP
 >;
 
+#if STATIC_CONSTANTS
+#define KERNEL_PREAMBLE \
+    jj = STATIC_JJ; \
+    kk = STATIC_KK; \
+    istart = STATIC_ISTART; \
+    jstart = STATIC_ISTART; \
+    kstart = STATIC_KSTART; \
+    iend = STATIC_IEND; \
+    jend = STATIC_JEND; \
+    kend = STATIC_KEND;
+#else
+#define KERNEL_PREAMBLE {};
+#endif
+
 extern "C"
 ELEMENTWISE_KERNEL(TuneTiling)
 void advec_u_wrapper(TF* __restrict__ ut, const TF* __restrict__ u,
@@ -25,10 +39,12 @@ void advec_u_wrapper(TF* __restrict__ ut, const TF* __restrict__ u,
                const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
                const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
                const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
+               int jj, int kk,
+               int istart, int jstart, int kstart,
+               int iend,   int jend,   const int kend)
 {
+    KERNEL_PREAMBLE
+
     TuneTiling::process_cta(
             istart, jstart, kstart,
             iend, jend, kend,
