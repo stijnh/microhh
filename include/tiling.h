@@ -4,7 +4,7 @@
 #include "grid.h"
 #include "tools.h"
 
-#define ELEMENTWISE_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_xyz, Strategy::blocks_per_sm)
+#define ELEMENTWISE_KERNEL(Strategy)  __global__ __launch_bounds__(Strategy::block_size_total, Strategy::blocks_per_sm)
 
 namespace levels {
     struct General
@@ -107,44 +107,46 @@ template <
         unsigned int tile_factor_x_,
         unsigned int tile_factor_y_,
         unsigned int tile_factor_z_,
-        unsigned int unroll_factor_x_,
-        unsigned int unroll_factor_y_,
-        unsigned int unroll_factor_z_,
-        unsigned int blocks_per_sm_=1
+        unsigned int unroll_factor_x_=0,
+        unsigned int unroll_factor_y_=0,
+        unsigned int unroll_factor_z_=0,
+        unsigned int blocks_per_sm_=1,
+        bool tile_contiguous_x_ = false,
+        bool tile_contiguous_y_ = false,
+        bool tile_contiguous_z_ = false
 >
 struct TilingStrategy
 {
     static constexpr unsigned int block_size_x = block_size_x_;
     static constexpr unsigned int block_size_y = block_size_y_;
     static constexpr unsigned int block_size_z = block_size_z_;
-    static constexpr unsigned int block_size[3] = {block_size_x, block_size_y, block_size_z};
+    static constexpr unsigned int block_size_xyz[3] = {block_size_x, block_size_y, block_size_z};
 
     static constexpr unsigned int tile_factor_x = tile_factor_x_;
     static constexpr unsigned int tile_factor_y = tile_factor_y_;
     static constexpr unsigned int tile_factor_z = tile_factor_z_;
-    static constexpr unsigned int tile_factor[3] = {tile_factor_x, tile_factor_y, tile_factor_z};
+    static constexpr unsigned int tile_factor_xyz[3] = {tile_factor_x, tile_factor_y, tile_factor_z};
 
-    static constexpr unsigned int unroll_factor_x = unroll_factor_x_;
-    static constexpr unsigned int unroll_factor_y = unroll_factor_y_;
-    static constexpr unsigned int unroll_factor_z = unroll_factor_z_;
-    static constexpr unsigned int blocks_per_sm = blocks_per_sm_;
+    static constexpr unsigned int unroll_factor_x = unroll_factor_x_ > 0 ? unroll_factor_x_ : tile_factor_x_;
+    static constexpr unsigned int unroll_factor_y = unroll_factor_y_ > 0 ? unroll_factor_y_ : tile_factor_y_;
+    static constexpr unsigned int unroll_factor_z = unroll_factor_z_ > 0 ? unroll_factor_z_ : tile_factor_z_;
 
     static constexpr unsigned int tile_size_x = tile_factor_x * block_size_x;
     static constexpr unsigned int tile_size_y = tile_factor_y * block_size_y;
     static constexpr unsigned int tile_size_z = tile_factor_z * block_size_z;
-    static constexpr unsigned int tile_size[3] = {tile_size_x, tile_size_y, tile_size_z};
+    static constexpr unsigned int tile_size_xyz[3] = {tile_size_x, tile_size_y, tile_size_z};
 
-    static constexpr unsigned int block_size_xyz = block_size_x * block_size_y * block_size_z;
-    static constexpr unsigned int tile_size_xyz = tile_size_x * tile_size_y * tile_size_z;
+    static constexpr unsigned int block_size_total = block_size_x * block_size_y * block_size_z;
+    static constexpr unsigned int tile_size_total = tile_size_x * tile_size_y * tile_size_z;
 
-    using single_layer_strategy = TilingStrategy<
-            block_size_x, block_size_y, 1,
-            tile_factor_x, tile_factor_y, 1,
-            unroll_factor_x, unroll_factor_y, 1,
-            blocks_per_sm>;
+    static constexpr unsigned int blocks_per_sm = blocks_per_sm_;
+    static constexpr bool tile_contiguous_x = tile_contiguous_x_ || block_size_x == 1 || tile_factor_x == 1;
+    static constexpr bool tile_contiguous_y = tile_contiguous_y_ || block_size_y == 1 || tile_factor_y == 1;
+    static constexpr bool tile_contiguous_z = tile_contiguous_z_ || block_size_z == 1 || tile_factor_z == 1;
+    static constexpr bool tile_contiguous_xyz[3] = {tile_contiguous_x, tile_contiguous_y, tile_contiguous_z};
 
-    static_assert(block_size_xyz > 0, "invalid block size");
-    static_assert(tile_size_xyz > 0, "invalid tile size");
+    static_assert(block_size_total > 0, "invalid block size");
+    static_assert(tile_size_total > 0, "invalid tile size");
 
     template <typename F, typename... Args>
     CUDA_DEVICE
@@ -157,14 +159,20 @@ struct TilingStrategy
         for (int dj = 0; dj < tile_factor_y; dj++)
         {
             const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
-            const int j = jstart + blockIdx.y * tile_size_y + dj * block_size_y + thread_idx_y;
+            const int yoffset = tile_contiguous_y
+                                ? thread_idx_y * tile_factor_y + dj
+                                : dj * block_size_y + thread_idx_y;
+            const int j = jstart + blockIdx.y * tile_size_y + yoffset;
             if (tile_size_y > 1 && j >= jend) break;
 
 #pragma unroll(unroll_factor_x)
             for (int di = 0; di < tile_factor_x; di++)
             {
                 const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
-                const int i = istart + blockIdx.x * tile_size_x + di * block_size_x + thread_idx_x;
+                const int xoffset = tile_contiguous_x
+                                    ? thread_idx_x * tile_factor_x + di
+                                    : di * block_size_x + thread_idx_x;
+                const int i = istart + blockIdx.x * tile_size_x + xoffset;
                 if (tile_size_x > 1 && i >= iend) break;
 
                 fun(i, j, args...);
@@ -183,7 +191,10 @@ struct TilingStrategy
         for (int dk = 0; dk < tile_factor_z; dk++)
         {
             const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
-            const int k = kstart + blockIdx.z * tile_size_z + dk * block_size_z + thread_idx_z;
+            const int zoffset = tile_contiguous_z
+                                ? thread_idx_z * tile_factor_z + dk
+                                : dk * block_size_z + thread_idx_z;
+            const int k = kstart + blockIdx.z * tile_size_z + zoffset;
             if (tile_size_z > 1 && k >= kend) break;
 
             Level level(k, kstart, kend);
