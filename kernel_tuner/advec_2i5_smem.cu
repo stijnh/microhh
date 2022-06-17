@@ -18,187 +18,35 @@ using TuneTiling = TilingStrategy<
         BLOCKS_PER_MP
 >;
 
-template <int axis, typename F, typename Strategy>
-struct SmemTilingStrategy {
-    static_assert(axis >= 0 && axis <= 2, "invalid axis, must be 0, 1, 2");
-    static_assert(Strategy::tile_size_x > 1, "tile_size_x must be greater than one");
-    static_assert(Strategy::tile_size_y > 1, "tile_size_y must be greater than one");
-    static_assert(Strategy::tile_size_z > 1, "tile_size_z must be greater than one");
-
-    static constexpr int smem_ii = 1;
-    static constexpr int smem_jj = Strategy::tile_size_x;// - int(axis != 0);
-    static constexpr int smem_kk = smem_jj * (Strategy::tile_size_y) - int(axis != 1);
-    static constexpr int smem_size = smem_kk * (Strategy::tile_size_z) - int(axis != 2);
-    static constexpr int smem_strides[3] = {smem_ii, smem_jj, smem_kk};
-
-    CUDA_HOST_DEVICE
-    SmemTilingStrategy(F functor = {}): functor_(functor) {}
-
-    template <typename TF, typename ...Args>
-    CUDA_DEVICE void initialize_smem(
-            TF* smem,
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            Args... args
-    ) {
-        const int thread_idx_x = Strategy::block_size_x == 1 ? 0 : threadIdx.x;
-        const int thread_idx_y = Strategy::block_size_y == 1 ? 0 : threadIdx.y;
-        const int thread_idx_z = Strategy::block_size_z == 1 ? 0 : threadIdx.z;
-
-#pragma unroll(Strategy::unroll_factor_z)
-        for (int dk = 0; dk < Strategy::tile_factor_z; dk++) {
-            const int koffset = dk * Strategy::block_size_z + thread_idx_z;
-            const int k = kstart + blockIdx.z * (Strategy::tile_size_z - 1) + koffset;
-
-
-#pragma unroll(Strategy::unroll_factor_y)
-            for (int dj = 0; dj < Strategy::tile_factor_y; dj++) {
-                const int joffset = dj * Strategy::block_size_y + thread_idx_y;
-                const int j = jstart + blockIdx.y * (Strategy::tile_size_y - 1) + joffset;
-
-
-#pragma unroll(Strategy::unroll_factor_x)
-                for (int di = 0; di < Strategy::tile_factor_x; di++) {
-                    const int ioffset = di * Strategy::block_size_x + thread_idx_x;
-                    const int i = istart + blockIdx.x * (Strategy::tile_size_x - 1) + ioffset;
-
-                    bool valid = true;
-                    if (axis == 2) {
-                        if (k > kend) valid = false;
-                    } else {
-                        if (k >= kend || koffset >= Strategy::tile_size_z - 1) valid = false;
-                    }
-
-                    if (axis == 1) {
-                        if (j > jend) valid = false;
-                    } else {
-                        if (j >= jend || joffset >= Strategy::tile_size_y - 1) valid = false;
-                    }
-
-                    if (axis == 0) {
-                        if (i > iend) valid = false;
-                    } else {
-                        if (i >= iend || ioffset >= Strategy::tile_size_x - 1) valid = false;
-                    }
-
-                    const int index = ioffset * smem_ii + joffset * smem_jj + koffset * smem_kk;
-                    if (valid) smem[index] = functor_.init(i, j, k, args...);
-                }
-            }
-        }
-    }
-
-    template <bool UseSmem, typename TF, typename ...Args>
-    CUDA_DEVICE void execute_internal(
-            const TF* smem,
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            Args... args
-    ) {
-        const int thread_idx_x = Strategy::block_size_x == 1 ? 0 : threadIdx.x;
-        const int thread_idx_y = Strategy::block_size_y == 1 ? 0 : threadIdx.y;
-        const int thread_idx_z = Strategy::block_size_z == 1 ? 0 : threadIdx.z;
-
-#pragma unroll(Strategy::unroll_factor_z)
-        for (int dk = 0; dk < Strategy::tile_factor_z; dk++)
-        {
-            const int koffset = dk * Strategy::block_size_z + thread_idx_z;
-            const int k = kstart + blockIdx.z * (Strategy::tile_size_z - 1)  + koffset;
-
-#pragma unroll(Strategy::unroll_factor_y)
-            for (int dj = 0; dj < Strategy::tile_factor_y; dj++)
-            {
-                const int joffset = dj * Strategy::block_size_y + thread_idx_y;
-                const int j = jstart + blockIdx.y * (Strategy::tile_size_y - 1) + joffset;
-
-#pragma unroll(Strategy::unroll_factor_x)
-                for (int di = 0; di < Strategy::tile_factor_x; di++)
-                {
-                    const int ioffset = di * Strategy::block_size_x + thread_idx_x;
-                    const int i = istart + blockIdx.x * (Strategy::tile_size_x - 1) + ioffset;
-
-                    if (i >= iend || ioffset >= Strategy::tile_size_x - 1) continue;
-                    if (j >= jend || joffset >= Strategy::tile_size_y - 1) continue;
-                    if (k >= kend || koffset >= Strategy::tile_size_z - 1) continue;
-
-                    TF left, right;
-
-                    if (UseSmem) {
-                        const int lindex = ioffset * smem_ii + joffset * smem_jj + koffset * smem_kk;
-                        const int rindex = lindex + smem_strides[axis];
-
-                        left = smem[lindex];
-                        right = smem[rindex];
-                    } else {
-                        left = functor_.init(i, j, k, args...);
-                        right = functor_.init(i +  (int)(axis == 0), j + (int)(axis == 1), k + (int)(axis == 2), args...);
-                    }
-
-                    functor_.execute(
-                            left, right,
-                            i, j, k,
-                            args...
-                    );
-                }
-            }
-        }
-    }
-
-    template <typename ...Args>
-    CUDA_DEVICE void execute_smem(Args... args) {
-        execute_internal<true>(args...);
-    }
-
-    template <typename ...Args>
-    CUDA_DEVICE void execute_nosmem(Args... args) {
-        execute_internal<false>((TF*) nullptr, args...);
-    }
-
-    template <typename TF, typename ...Args>
-    CUDA_DEVICE void execute(
-            TF* smem,
-            const int istart, const int jstart, const int kstart,
-            const int iend, const int jend, const int kend,
-            Args... args
-    ) {
-        initialize_smem(smem, istart, jstart, kstart, iend, jend, kend, args...);
-        __syncthreads();
-        execute_smem(smem, istart, jstart, kstart, iend, jend, kend, args...);
-    }
-
-private:
-    F functor_;
-};
-
-
 template <typename TF>
 struct advec_u_i_interp {
     __forceinline__ __device__
     TF init(
+            const int ijk,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
+            const int jj, const int kk)
     {
         const int ii1 = 1;
         const int ii2 = 2;
         const int ii3 = 3;
-        const int ijk = i + j*jj + k*kk;
 
         return fabs(interp2(u[ijk-ii1], u[ijk])) * interp5_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk], u[ijk+ii1], u[ijk+ii2])
                - interp2(u[ijk-ii1], u[ijk]) * interp6_ws(u[ijk-ii3], u[ijk-ii2], u[ijk-ii1], u[ijk], u[ijk+ii1], u[ijk+ii2]);
     }
 
     __forceinline__ __device__
-    void execute(
+    TF execute(
             TF left, TF right,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
+            const int jj, const int kk)
     {
-        const int ijk = i + j*jj + k*kk;
-        ut[ijk] += (right - left) * dxi;
+        return (right - left) * dxi;
     }
 };
 
@@ -206,34 +54,35 @@ template <typename TF>
 struct advec_u_j_interp {
     __forceinline__ __device__
     TF init(
+            const int ijk_,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
-            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
+            const int jj, const int kk)
     {
-        const int ii1 = 1;
-        const int jj1 = 1*jj;
-        const int jj2 = 2*jj;
-        const int jj3 = 3*jj;
-        const int ijk = i + j*jj + k*kk;
+        const int ii = 1;
+        const int ijknjj3 = i * ii + k * kk + (j - 3) * jj;
+        const int ijknjj2 = i * ii + k * kk + (j - 2) * jj;
+        const int ijknjj1 = i * ii + k * kk + (j - 1) * jj;
+        const int ijk     = i * ii + k * kk + (j    ) * jj;
+        const int ijkpjj1 = i * ii + k * kk + (j + 1) * jj;
+        const int ijkpjj2 = i * ii + k * kk + (j + 2) * jj;
 
-        return fabs(interp2(v[ijk-ii1], v[ijk])) * interp5_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk], u[ijk+jj1], u[ijk+jj2])
-               - interp2(v[ijk-ii1], v[ijk]) * interp6_ws(u[ijk-jj3], u[ijk-jj2], u[ijk-jj1], u[ijk], u[ijk+jj1], u[ijk+jj2]);
+        return fabs(interp2(v[ijk-ii], v[ijk])) * interp5_ws(u[ijknjj3], u[ijknjj2], u[ijknjj1], u[ijk], u[ijkpjj1], u[ijkpjj2])
+               - interp2(v[ijk-ii], v[ijk]) * interp6_ws(u[ijknjj3], u[ijknjj2], u[ijknjj1], u[ijk], u[ijkpjj1], u[ijkpjj2]);
     }
 
     __forceinline__ __device__
-    void execute(
+    TF execute(
             TF left, TF right,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
-            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk
-    )
+            const int jj, const int kk)
     {
-        const int ijk = i + j*jj + k*kk;
-        ut[ijk] += (right - left) * dyi;
+        return (right - left) * dyi;
     }
 };
 
@@ -241,110 +90,159 @@ template <typename TF>
 struct advec_u_k_interp {
     __forceinline__ __device__
     TF init(
+            const int ijk_,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
-            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
             const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk)
+            const int jj, const int kk)
     {
-        const int ii1 = 1;
-        const int kk1 = 1*kk;
-        const int kk2 = 2*kk;
-        const int kk3 = 3*kk;
-        const int ijk = i + j*jj + k*kk;
+        const int ii = 1;
+        const int ijknkk3 = i * ii + j * jj + (k - 3) * kk;
+        const int ijknkk2 = i * ii + j * jj + (k - 2) * kk;
+        const int ijknkk1 = i * ii + j * jj + (k - 1) * kk;
+        const int ijk     = i * ii + j * jj + (k    ) * kk;
+        const int ijkpkk1 = i * ii + j * jj + (k + 1) * kk;
+        const int ijkpkk2 = i * ii + j * jj + (k + 2) * kk;
 
-        return -rhorefh[k] * interp2(w[ijk-ii1], w[ijk]) * interp6_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk], u[ijk+kk1], u[ijk+kk2])
-            + rhorefh[k] * fabs(interp2(w[ijk-ii1], w[ijk])) * interp5_ws(u[ijk-kk3], u[ijk-kk2], u[ijk-kk1], u[ijk], u[ijk+kk1], u[ijk+kk2]);
+        return -rhorefh[k] * interp2(w[ijk-ii], w[ijk]) * interp6_ws(u[ijknkk3], u[ijknkk2], u[ijknkk1], u[ijk], u[ijkpkk1], u[ijkpkk2])
+               + rhorefh[k] * fabs(interp2(w[ijk-ii], w[ijk])) * interp5_ws(u[ijknkk3], u[ijknkk2], u[ijknkk1], u[ijk], u[ijkpkk1], u[ijkpkk2]);
     }
 
     __forceinline__ __device__
-    void execute(
+    TF execute(
             TF left, TF right,
             const int i, const int j, const int k,
-            TF* __restrict__ ut, const TF* __restrict__ u,
-            const TF* __restrict__ v,  const TF* __restrict__ w,
+            const TF* __restrict__ u, const TF* __restrict__ v,  const TF* __restrict__ w,
             const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
             const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-            const int jj, int kk
+            const int jj, const int kk
     )
     {
-        const int ijk = i + j*jj + k*kk;
-        ut[ijk] += (right - left) * dzi[k] / rhoref[k];
+        return (right - left) * dzi[k] / rhoref[k];
     }
 };
 
-template <typename T>
-__host__ __device__ constexpr T max3(T a, T b, T c) {
-    if (a > b && a > c) {
-        return a;
-    } else if (b > c) {
-        return b;
+
+template <typename Strategy>
+__forceinline__ __device__
+int calculate_i(int istart, int dx) {
+    int thread_idx_x = threadIdx.x;
+
+    if (Strategy::block_size_x == warpSize) {
+        return istart + blockIdx.x * Strategy::tile_size_x + thread_idx_x + dx * warpSize;
+    } else if (Strategy::block_size_x % warpSize == 0) {
+        int laneid = thread_idx_x % warpSize;
+        int warpid = thread_idx_x / warpSize;
+        return istart + blockIdx.x * Strategy::tile_size_x + warpid * Strategy::tile_factor_x * warpSize + laneid +
+               dx * warpSize;
     } else {
-        return c;
+        int thread_idx_x = Strategy::block_size_x == 1 ? 0 : threadIdx.x;
+        return istart + blockIdx.x * Strategy::tile_size_x + thread_idx_x * Strategy::tile_factor_x + dx;
+    }
+
+    // ((blockIdx.x * Strategy::block_size_x / warpSize + warpid) * Strategy::tile_factor_x + dx) * warpSize  + laneid
+}
+
+template <typename Strategy>
+__forceinline__ __device__
+int calculate_j(int jstart, int dy) {
+    int thread_idx_y = Strategy::block_size_y == 1 ? 0 : threadIdx.y;
+    return jstart + blockIdx.y * Strategy::tile_size_y + thread_idx_y * Strategy::tile_factor_y + dy;
+}
+
+template <typename Strategy>
+__forceinline__ __device__
+int calculate_k(int kstart, int dz) {
+    int thread_idx_z = Strategy::block_size_z == 1 ? 0 : threadIdx.z;
+    return kstart + blockIdx.z * Strategy::tile_size_z + thread_idx_z * Strategy::tile_factor_z + dz;
+}
+
+template <typename Strategy, typename FI, typename FJ, typename FK, typename ...Args>
+__forceinline__ __device__
+void diff_tiling(
+        FI fi, FJ fj, FK fk,
+        const int istart, const int jstart, const int kstart,
+        const int iend,   const int jend,   const int kend,
+        TF *output, const int ii, const int jj, const int kk,
+        Args... args
+) {
+    double tile_i;
+    double tile_j[Strategy::tile_factor_x];
+    double tile_k[Strategy::tile_factor_y][Strategy::tile_factor_x];
+
+    const int axis_start[3] = {istart, jstart, kstart};
+    const int axis_end[3] = {iend, jend, kend};
+    int indices[3];
+
+#pragma unroll
+    for (int dz = 0; dz < Strategy::tile_factor_z; dz++) {
+        indices[2] = calculate_k<Strategy>(axis_start[2], dz);
+        if (indices[2] >= axis_end[2] && Strategy::tile_size_xyz[2] > 1) break;
+
+#pragma unroll
+        for (int dy = 0; dy < Strategy::tile_factor_y; dy++) {
+            indices[1] = calculate_j<Strategy>(axis_start[1], dy);
+            if (indices[1] >= axis_end[1] && Strategy::tile_size_xyz[1] > 1) break;
+
+#pragma unroll
+            for (int dx = 0; dx < Strategy::tile_factor_x; dx++) {
+                indices[0] = calculate_i<Strategy>(axis_start[0], dx);
+
+                int i = indices[0];
+                int j = indices[1];
+                int k = indices[2];
+                int ijk = i * ii + j * jj + k * kk;
+
+                TF result = 0;
+                TF left_i, right_i;
+                right_i = i <= iend ? fi.init(ijk + ii, i + 1, j, k, args...) : 0.0;
+
+                if (dx == 0 || Strategy::block_size_x % warpSize != 0) {
+                    left_i = i < iend ? fi.init(ijk, i, j, k, args...) : 0.0;
+                } else {
+                    int laneid = threadIdx.x % warpSize;
+                    left_i = __shfl_sync(
+                        0xffffffff,
+                        laneid == warpSize - 1 ? tile_i: right_i,
+                        (laneid + warpSize - 1) % warpSize
+                    );
+                }
+
+                if (i >= iend) break;
+                tile_i = right_i;
+                result += fi.execute(left_i, right_i, i, j, k, args...);
+
+                TF left_j = dy == 0 ? fj.init(ijk, i, j, k, args...) : tile_j[dx];
+                TF right_j = fj.init(ijk + jj, i, j + 1, k, args...);
+                tile_j[dx] = right_j;
+                result += fj.execute(left_j, right_j, i, j, k, args...);
+
+                TF left_k = dz == 0 ? fk.init(ijk, i, j, k, args...) : tile_k[dy][dx];
+                TF right_k = fk.init(ijk + kk, i, j, k + 1, args...);
+                tile_k[dy][dx] = right_k;
+                result += fk.execute(left_k, right_k, i, j, k, args...);
+
+                output[ijk] += result;
+            }
+        }
     }
 }
 
-
 extern "C"
 ELEMENTWISE_KERNEL(TuneTiling)
-void advec_u_g(TF* __restrict__ ut, const TF* __restrict__ u,
+void advec_u_shared(TF* __restrict__ ut, const TF* __restrict__ u,
                const TF* __restrict__ v,  const TF* __restrict__ w,
                const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
                const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
+               const int jj, const int kk,
                const int istart, const int jstart, const int kstart,
                const int iend,   const int jend,   const int kend)
 {
-    using Tiling = TuneTiling;
-    using AdvecUI = SmemTilingStrategy<0, advec_u_i_interp<TF>, Tiling>;
-    using AdvecUJ = SmemTilingStrategy<1, advec_u_j_interp<TF>, Tiling>;
-    using AdvecUK = SmemTilingStrategy<2, advec_u_k_interp<TF>, Tiling>;
-
-#if USE_SMEM_X || USE_SMEM_Y || USE_SMEM_Z
-    static constexpr size_t smem_size = max3(
-            AdvecUI::smem_size * int(USE_SMEM_X != 0),
-            AdvecUJ::smem_size * int(USE_SMEM_Y != 0),
-            AdvecUK::smem_size * int(USE_SMEM_Z != 0)
-    );
-    __shared__ TF smem[smem_size];
-#endif
-
-#if USE_SMEM_X
-    AdvecUI{}.execute(smem,
+    diff_tiling<TuneTiling>(
+            advec_u_i_interp<TF> {}, advec_u_j_interp<TF> {}, advec_u_k_interp<TF> {},
             istart, jstart, kstart,
             iend, jend, kend,
-            ut, u, dzi, dxi, dyi, jj, kk);
-    __syncthreads();
-#else
-    AdvecUI{}.execute_nosmem(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            ut, u, dzi, dxi, dyi, jj, kk);
-#endif
-
-#if USE_SMEM_Y
-    AdvecUJ{}.execute(smem,
-            istart, jstart, kstart,
-            iend, jend, kend,
-            ut, u, v, w, dzi, dxi, dyi, jj, kk);
-    __syncthreads();
-#else
-    AdvecUJ{}.execute_nosmem(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            ut, u, v, w, dzi, dxi, dyi, jj, kk);
-#endif
-
-#if USE_SMEM_Z
-    AdvecUK{}.execute(smem,
-            istart, jstart, kstart,
-            iend, jend, kend,
-            ut, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk);
-#else
-    AdvecUK{}.execute_nosmem(
-            istart, jstart, kstart,
-            iend, jend, kend,
-            ut, u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk);
-#endif
+            ut, 1, jj, kk,
+            u, v, w, rhoref, rhorefh, dzi, dxi, dyi, jj, kk);
 }

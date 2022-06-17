@@ -16,10 +16,15 @@ using TuneTiling = TilingStrategy<
         LOOP_UNROLL_FACTOR_Y,
         LOOP_UNROLL_FACTOR_Z,
         BLOCKS_PER_MP
+#ifdef TILE_CONTIGUOUS_X
+        ,bool(TILE_CONTIGUOUS_X)
+        ,bool(TILE_CONTIGUOUS_Y)
+        ,bool(TILE_CONTIGUOUS_Z)
+#endif
 >;
 
 #if STATIC_CONSTANTS
-#define KERNEL_PREAMBLE \
+#define KERNEL_PREAMBLE_STATIC \
     jj = STATIC_JJ; \
     kk = STATIC_KK; \
     istart = STATIC_ISTART; \
@@ -29,7 +34,7 @@ using TuneTiling = TilingStrategy<
     jend = STATIC_JEND; \
     kend = STATIC_KEND;
 #else
-#define KERNEL_PREAMBLE {};
+#define KERNEL_PREAMBLE_STATIC {};
 #endif
 
 extern "C"
@@ -41,9 +46,9 @@ void advec_u_wrapper(TF* __restrict__ ut, const TF* __restrict__ u,
                const TF* __restrict__ dzi, const TF dxi, const TF dyi,
                int jj, int kk,
                int istart, int jstart, int kstart,
-               int iend,   int jend,   const int kend)
+               int iend,   int jend,   int kend)
 {
-    KERNEL_PREAMBLE
+    KERNEL_PREAMBLE_STATIC
 
     TuneTiling::process_cta(
             istart, jstart, kstart,
@@ -62,11 +67,11 @@ ELEMENTWISE_KERNEL(TuneTiling)
 void advec_v_wrapper(TF* __restrict__ vt, const TF* __restrict__ u,
                const TF* __restrict__ v,  const TF* __restrict__ w,
                const TF* __restrict__ rhoref, const TF* __restrict__ rhorefh,
-                     const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
+               const TF* __restrict__ rhoref_rcp, const TF* __restrict__ rhorefh_rcp,
                const TF* __restrict__ dzi, const TF dxi, const TF dyi,
-               const int jj, int kk,
-               const int istart, const int jstart, const int kstart,
-               const int iend,   const int jend,   const int kend)
+               int jj, int kk,
+               int istart, int jstart, int kstart,
+               int iend,   int jend,   const int kend)
 {
     TuneTiling::process_cta(
             istart, jstart, kstart,
@@ -101,6 +106,31 @@ void advec_w_wrapper(TF* __restrict__ wt, const TF* __restrict__ u,
             dzi, dxi, dyi,
             jj, kk,
             rhorefh_rcp);
+}
+
+extern "C"
+ELEMENTWISE_KERNEL(TuneTiling)
+void advec_u_interior_wrapper(TF*  ut, const TF*  u,
+                     const TF*  v,  const TF*  w,
+                     const TF*  rhoref, const TF*  rhorefh,
+                     const TF*  rhoref_rcp, const TF*  rhorefh_rcp,
+                     const TF*  dzi, const TF dxi, const TF dyi,
+                     int jj, int kk,
+                     int istart, int jstart, int kstart,
+                     int iend,   int jend,   int kend)
+{
+    KERNEL_PREAMBLE_STATIC
+
+    TuneTiling::process_cta_middle(
+            istart, jstart, kstart,
+            iend, jend, kend,
+            advec_u_body<TF, USE_RECIPROCAL>(),
+            ut, u,
+            v, w,
+            rhoref, rhorefh,
+            dzi, dxi, dyi,
+            jj, kk,
+            rhoref_rcp);
 }
 
 template<typename TF>
@@ -142,6 +172,7 @@ void advec_uvw_wrapper(
             ut, vt, wt,
             u, v, w,
             rhoref, rhorefh,
+            rhoref_rcp, rhorefh_rcp,
             dzi, dxi, dyi,
             jj, kk);
 #else
@@ -196,11 +227,11 @@ void advec_uvw_interior_wrapper(
     TuneTiling::process_cta_middle(
             istart, jstart, kstart,
             iend, jend, kend,
-            advec_uvw_body<TF, USE_RECIPROCAL>(),
+            advec_uvw_body<TF>(),
             ut, vt, wt,
             u, v, w,
             rhoref, rhorefh,
-            rhoref_rcp, rhorefh_rcp
+            rhoref_rcp, rhorefh_rcp,
             dzi, dxi, dyi,
             jj, kk);
 #else

@@ -3,7 +3,7 @@ import numpy as np
 import sys
 from pprint import pprint
 
-def tune_advec_u_smem(grid):
+def tune_advec_u_shared(grid):
     fields = Fields.from_grid(grid, ["u", "v", "w"])
     border = np.int32(3)
     args = [
@@ -17,21 +17,19 @@ def tune_advec_u_smem(grid):
         grid.iend, grid.jend, grid.kend - border
     ]
 
-
-    kernel_name = "advec_u_g"
+    kernel_name = "advec_u_shared"
     kernel_source = "advec_2i5_smem.cu"
     nlayers = grid.ktot - 2 * border
 
     params = dict(
         USE_RECIPROCAL=[0],
-        USE_SMEM_X=[0, 1],
-        USE_SMEM_Y=[0, 1],
-        USE_SMEM_Z=[0, 1],
     )
-    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, cta_padding=1, nlayers=nlayers)
 
-def tune_advec(axis, grid):
+    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, nlayers=nlayers)
+
+def tune_advec(axis, grid, interior=False):
     fields = Fields.from_grid(grid, ["u", "v", "w"])
+    border = np.int32(3 if interior else 0)
 
     args = [
         fields.u.tend, fields.u.fld,
@@ -40,15 +38,41 @@ def tune_advec(axis, grid):
         1.0 / fields.rhoref, 1.0 / fields.rhorefh,
         grid.dzi, grid.dxi, grid.dyi,
         grid.icells, grid.ijcells,
-        grid.istart, grid.jstart, grid.kstart,
-        grid.iend, grid.jend, grid.kend
+        grid.istart, grid.jstart, grid.kstart + border,
+        grid.iend, grid.jend, grid.kend - border
     ]
 
-    kernel_name = f"advec_{axis}_wrapper"
+    suffix = '_interior' if interior else ''
+    kernel_name = f"advec_{axis}{suffix}_wrapper"
     kernel_source = "advec_2i5.cu"
-    params = dict(REWRITE_FINITE_DIFFERENCE=[0], USE_RECIPROCAL=[0, 1])
+    nlayers = grid.ktot - 2 * border
+    params = dict(
+        REWRITE_FINITE_DIFFERENCE=[0],
+        USE_RECIPROCAL=[0],#[0, 1],
+        TILE_CONTIGUOUS_X=[0],
+        TILE_CONTIGUOUS_Y=[0, 1],
+        TILE_CONTIGUOUS_Z=[0, 1],
+        STATIC_CONSTANTS=[0],#[0, 1]
+    )
 
-    return tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params)
+    defines = dict(
+        STATIC_JJ=grid.icells,
+        STATIC_KK=grid.ijcells,
+        STATIC_ISTART=grid.istart,
+        STATIC_JSTART=grid.jstart,
+        STATIC_KSTART=grid.kstart + border,
+        STATIC_IEND=grid.iend,
+        STATIC_JEND=grid.jend,
+        STATIC_KEND=grid.kend - border,
+    )
+
+    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, defines=defines, nlayers=nlayers)
+
+    params['USE_RECIPROCAL'] = [0, 1]
+    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, defines=defines, nlayers=nlayers)
+
+    params['STATIC_CONSTANTS'] = [0, 1]
+    tune_and_store(grid, args, kernel_name, kernel_source, extra_params=params, defines=defines, nlayers=nlayers)
 
 
 def tune_advec_u(grid):
@@ -215,9 +239,12 @@ def tune_diff_uvw(grid):
 
 def main(args):
     tune_functions = dict(
-        advec_u=tune_advec_u,
-        advec_v=tune_advec_v,
-        advec_w=tune_advec_w,
+        advec_u=lambda g: tune_advec('u', g, False),
+        advec_v=lambda g: tune_advec('v', g, False),
+        advec_w=lambda g: tune_advec('w', g, False),
+        advec_u_int=lambda g: tune_advec('u', g, True),
+        advec_v_int=lambda g: tune_advec('v', g, True),
+        advec_w_int=lambda g: tune_advec('w', g, True),
         advec_uvw=tune_advec_uvw,
         advec_uvw_int=tune_advec_uvw_interior,
         advec_s=tune_advec_s,
@@ -228,7 +255,7 @@ def main(args):
         advec_s_lim=tune_advec_s_lim,
         calc_cfl=tune_calc_cfl,
         diff_uvw=tune_diff_uvw,
-        advec_u_smem=tune_advec_u_smem,
+        advec_u_shared=tune_advec_u_shared,
     )
 
     if len(args) < 2:

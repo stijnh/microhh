@@ -155,25 +155,29 @@ struct TilingStrategy
             const int iend, const int jend,
             F fun, Args... args)
     {
+        const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
+        const int yoffset = jstart + blockIdx.y * tile_size_y +
+                (tile_contiguous_y ? thread_idx_y * tile_factor_y : thread_idx_y);
+
+        if (block_size_y > 1 && tile_factor_y == 1 && yoffset >= jend) return;
+
+        const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
+        const int xoffset = istart + blockIdx.x * tile_size_x +
+                (tile_contiguous_x ? thread_idx_x * tile_factor_x : thread_idx_x);
+
+        if (block_size_x > 1 && tile_factor_x == 1 && xoffset >= iend) return;
+
 #pragma unroll(unroll_factor_y)
         for (int dj = 0; dj < tile_factor_y; dj++)
         {
-            const int thread_idx_y = block_size_y > 1 ? threadIdx.y : 0;
-            const int yoffset = tile_contiguous_y
-                                ? thread_idx_y * tile_factor_y + dj
-                                : dj * block_size_y + thread_idx_y;
-            const int j = jstart + blockIdx.y * tile_size_y + yoffset;
-            if (tile_size_y > 1 && j >= jend) break;
+            const int j = yoffset + dj * (tile_contiguous_y ? 1 : block_size_y);
+            if (tile_factor_y > 1 && j >= jend) break;
 
 #pragma unroll(unroll_factor_x)
             for (int di = 0; di < tile_factor_x; di++)
             {
-                const int thread_idx_x = block_size_x > 1 ? threadIdx.x : 0;
-                const int xoffset = tile_contiguous_x
-                                    ? thread_idx_x * tile_factor_x + di
-                                    : di * block_size_x + thread_idx_x;
-                const int i = istart + blockIdx.x * tile_size_x + xoffset;
-                if (tile_size_x > 1 && i >= iend) break;
+                const int i = xoffset + di * (tile_contiguous_x ? 1 : block_size_x);
+                if (tile_factor_x > 1 && i >= iend) break;
 
                 fun(i, j, args...);
             }
@@ -187,14 +191,14 @@ struct TilingStrategy
             const int iend, const int jend, const int kend,
             F fun, Args... args)
     {
+        const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
+        const int zstart = kstart + blockIdx.z * tile_size_z +
+                (tile_contiguous_z ? thread_idx_z * tile_factor_z: thread_idx_z);
+
 #pragma unroll(unroll_factor_z)
         for (int dk = 0; dk < tile_factor_z; dk++)
         {
-            const int thread_idx_z = block_size_z > 1 ? threadIdx.z : 0;
-            const int zoffset = tile_contiguous_z
-                                ? thread_idx_z * tile_factor_z + dk
-                                : dk * block_size_z + thread_idx_z;
-            const int k = kstart + blockIdx.z * tile_size_z + zoffset;
+            const int k = zstart + dk * (tile_contiguous_z ? 1 : block_size_z);
             if (tile_size_z > 1 && k >= kend) break;
 
             Level level(k, kstart, kend);
